@@ -1,38 +1,42 @@
 /**
  * firebase-rooms.js
- * สร้างข้อมูลหน่วยตรวจจริงใน Firestore
+ * Happy Night Cleaning
  *
- * ห้องพัก 1-20
- * VIP 1-4
+ * หน่วยตรวจจริง:
+ * - ห้อง 1-20
+ * - VIP 1-4
  * รวม 24 หน่วย
- *
- * ไม่แก้ Firebase Core
- * ไม่เขียนทับห้องที่มีอยู่แล้ว
  */
 
 (function () {
 
-  // =====================================================
+  console.log("🔄 Loading Happy Night Rooms module...");
+
+
+  // ======================================================
   // รอ Firebase Core
-  // =====================================================
+  // ======================================================
 
   async function waitForFirebase(timeoutMs = 20000) {
 
-    const start = Date.now();
+    const startTime = Date.now();
 
-    while (Date.now() - start < timeoutMs) {
+    while (Date.now() - startTime < timeoutMs) {
 
       if (
         window.HappyNightFirebase &&
-        window.HappyNightFirebase.db &&
-        window.HappyNightFirebase.auth
+        window.HappyNightFirebase.auth &&
+        window.HappyNightFirebase.db
       ) {
+
         return window.HappyNightFirebase;
+
       }
 
-      await new Promise(resolve =>
-        setTimeout(resolve, 100)
-      );
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+
     }
 
     throw new Error(
@@ -41,9 +45,9 @@
   }
 
 
-  // =====================================================
-  // สร้างห้องจริง 1-20 + VIP1-4
-  // =====================================================
+  // ======================================================
+  // สร้างห้อง 1-20 + VIP 1-4
+  // ======================================================
 
   async function createActualRooms() {
 
@@ -51,7 +55,7 @@
       await waitForFirebase();
 
 
-    // ต้อง Login Firebase เป็น Admin ก่อน
+    // ต้องเป็น Firebase Admin ที่ Login แล้ว
     if (!firebase.auth.currentUser) {
 
       throw new Error(
@@ -62,20 +66,24 @@
 
 
     console.log(
-      "🔄 กำลังตรวจสอบข้อมูลห้อง..."
+      "🔄 กำลังตรวจสอบข้อมูล rooms ใน Firestore..."
     );
 
 
-    // ===================================================
-    // อ่านข้อมูลที่มีอยู่แล้ว
-    // ===================================================
+    // ====================================================
+    // อ่านข้อมูลห้องเดิม
+    // ====================================================
 
-    const snapshot =
+    const roomsCollection =
+      firebase.collection(
+        firebase.db,
+        "rooms"
+      );
+
+
+    const roomsSnapshot =
       await firebase.getDocs(
-        firebase.collection(
-          firebase.db,
-          "rooms"
-        )
+        roomsCollection
       );
 
 
@@ -83,19 +91,29 @@
       new Set();
 
 
-    snapshot.forEach(doc => {
-      existingIds.add(doc.id);
+    roomsSnapshot.forEach((roomDoc) => {
+
+      existingIds.add(
+        roomDoc.id
+      );
+
     });
 
 
-    // ===================================================
-    // รายการหน่วยจริง
-    // ===================================================
+    console.log(
+      "Rooms ที่มีอยู่:",
+      Array.from(existingIds)
+    );
+
+
+    // ====================================================
+    // สร้างรายการ 24 หน่วย
+    // ====================================================
 
     const units = [];
 
 
-    // ห้อง 1-20
+    // ห้องพัก 1-20
     for (
       let roomNumber = 1;
       roomNumber <= 20;
@@ -104,8 +122,7 @@
 
       units.push({
 
-        id:
-          String(roomNumber),
+        id: String(roomNumber),
 
         RoomID:
           String(roomNumber),
@@ -129,39 +146,39 @@
 
     // VIP 1-4
     for (
-      let vip = 1;
-      vip <= 4;
-      vip++
+      let vipNumber = 1;
+      vipNumber <= 4;
+      vipNumber++
     ) {
 
       units.push({
 
         id:
-          `VIP${vip}`,
+          `VIP${vipNumber}`,
 
         RoomID:
-          `VIP${vip}`,
+          `VIP${vipNumber}`,
 
         RoomNumber:
           null,
 
         RoomName:
-          `VIP ${vip}`,
+          `VIP ${vipNumber}`,
 
         RoomType:
           "VIP",
 
         DisplayOrder:
-          20 + vip
+          20 + vipNumber
 
       });
 
     }
 
 
-    // ===================================================
-    // Batch
-    // ===================================================
+    // ====================================================
+    // Firestore Batch
+    // ====================================================
 
     const batch =
       firebase.writeBatch(
@@ -176,9 +193,15 @@
     for (const unit of units) {
 
       // มีอยู่แล้ว = ไม่เขียนทับ
-      if (existingIds.has(unit.id)) {
+      if (
+        existingIds.has(unit.id)
+      ) {
 
         skipped++;
+
+        console.log(
+          `⏭ ข้าม ${unit.RoomName} เพราะมีอยู่แล้ว`
+        );
 
         continue;
 
@@ -236,9 +259,9 @@
     }
 
 
-    // ===================================================
+    // ====================================================
     // Commit
-    // ===================================================
+    // ====================================================
 
     if (created > 0) {
 
@@ -246,6 +269,10 @@
 
     }
 
+
+    console.log(
+      "========================================"
+    );
 
     console.log(
       "✅ สร้างข้อมูลหน่วยตรวจเรียบร้อย"
@@ -260,7 +287,19 @@
     );
 
     console.log(
-      "ทั้งหมด: 24 หน่วย"
+      "ห้องพัก: 20"
+    );
+
+    console.log(
+      "VIP: 4"
+    );
+
+    console.log(
+      "รวม: 24 หน่วย"
+    );
+
+    console.log(
+      "========================================"
     );
 
 
@@ -268,28 +307,29 @@
 
       success: true,
 
+      created,
+
+      skipped,
+
       total: 24,
 
       guestRooms: 20,
 
-      vipRooms: 4,
-
-      created,
-
-      skipped
+      vipRooms: 4
 
     };
 
   }
 
 
-  // =====================================================
-  // เปิดให้เรียกจาก Console
-  // =====================================================
+  // ======================================================
+  // เปิดฟังก์ชันให้ Console / ระบบอื่นเรียกได้
+  // ======================================================
 
   window.HappyNightRooms = {
 
-    createActualRooms
+    createActualRooms:
+      createActualRooms
 
   };
 
