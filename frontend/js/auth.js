@@ -185,18 +185,19 @@ const Auth = {
           password
         );
 
-    } catch (error) {
+   } catch (error) {
 
-      console.error(
-        'Firebase Admin Login Error:',
-        error
-      );
+  console.error(
+    'Firebase Admin Login Error:',
+    error.code,
+    error.message
+  );
 
-      throw new Error(
-        'บัญชี Admin ผ่านระบบเดิมแล้ว แต่เข้าสู่ Firebase ไม่สำเร็จ กรุณาตรวจสอบ Email และรหัสผ่านของ Admin ใน Firebase Authentication'
-      );
-
-    }
+  throw new Error(
+    'Firebase Login ไม่สำเร็จ: ' +
+    (error.code || 'unknown-error')
+  );
+}
 
 
     // ===================================================
