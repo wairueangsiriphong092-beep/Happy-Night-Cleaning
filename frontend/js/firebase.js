@@ -1,156 +1,147 @@
 // ======================================================
-// Happy Night Cleaning - Firebase
-// GitHub Pages + Firebase Authentication + Cloud Firestore
-// ======================================================
-
-import { initializeApp }
-  from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
-
-import {
-  getAuth,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut
-} from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
-
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  setDoc,
-  collection,
-  getDocs,
-  onSnapshot,
-  serverTimestamp,
-  writeBatch
-} from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
-
-
-// ======================================================
-// Firebase Configuration
-// ======================================================
-
-const firebaseConfig = {
-  apiKey: "AIzaSyBC9FHZENjOXX91Kcx_DTEXA1wjv8bys5E",
-  authDomain: "happy-night-cleaning.firebaseapp.com",
-  projectId: "happy-night-cleaning",
-  storageBucket: "happy-night-cleaning.firebasestorage.app",
-  messagingSenderId: "973289542982",
-  appId: "1:973289542982:web:9ceffb5794f47b7b038147"
-};
-
-
-// ======================================================
-// Initialize Firebase
-// ======================================================
-
-const firebaseApp = initializeApp(firebaseConfig);
-
-const auth = getAuth(firebaseApp);
-
-const db = getFirestore(firebaseApp);
-
-
-// ======================================================
-// สร้างห้อง 1 - 24 อัตโนมัติ
+// สร้างหน่วยตรวจจริงของ Happy Night Cleaning
 //
-// หมายเหตุ:
-// - ต้อง Login Firebase ด้วย Admin ก่อน
-// - ห้องที่มีอยู่แล้วจะไม่ถูกเขียนทับ
-// - สร้างเฉพาะห้องที่ยังไม่มี
+// ห้องพัก 1 - 20
+// VIP 1 - 4
+//
+// รวมทั้งหมด 24 หน่วย
+// ไม่เขียนทับ Document ที่มีอยู่แล้ว
 // ======================================================
 
-async function createRooms1To24() {
-
-  // ----------------------------------------------------
-  // ตรวจสอบว่า Firebase Authentication Login แล้วหรือยัง
-  // ----------------------------------------------------
+async function createActualRooms() {
 
   const currentUser = auth.currentUser;
 
   if (!currentUser) {
-
     throw new Error(
       "กรุณา Login ด้วยบัญชี Admin ก่อนสร้างข้อมูลห้อง"
     );
-
   }
-
 
   console.log(
     "กำลังตรวจสอบข้อมูลห้องใน Firestore..."
   );
 
+  // ====================================================
+  // อ่านข้อมูล rooms ที่มีอยู่
+  // ====================================================
 
-  // ----------------------------------------------------
-  // อ่าน rooms ที่มีอยู่แล้ว
-  // ----------------------------------------------------
-
-  const roomsRef =
-    collection(db, "rooms");
+  const roomsRef = collection(
+    db,
+    "rooms"
+  );
 
   const roomsSnapshot =
     await getDocs(roomsRef);
 
-
   const existingRoomIds =
     new Set();
 
-
   roomsSnapshot.forEach((roomDoc) => {
-
     existingRoomIds.add(
       roomDoc.id
     );
-
   });
 
 
-  console.log(
-    "ห้องที่มีอยู่แล้ว:",
-    Array.from(existingRoomIds)
-  );
+  // ====================================================
+  // กำหนดหน่วยตรวจจริง
+  // ====================================================
+
+  const units = [];
 
 
   // ----------------------------------------------------
-  // เตรียม Batch
+  // ห้องพัก 1 - 20
   // ----------------------------------------------------
+
+  for (
+    let roomNumber = 1;
+    roomNumber <= 20;
+    roomNumber++
+  ) {
+
+    units.push({
+
+      id:
+        String(roomNumber),
+
+      RoomID:
+        String(roomNumber),
+
+      RoomNumber:
+        roomNumber,
+
+      RoomName:
+        `ห้อง ${roomNumber}`,
+
+      RoomType:
+        "GUEST_ROOM",
+
+      DisplayOrder:
+        roomNumber
+
+    });
+
+  }
+
+
+  // ----------------------------------------------------
+  // VIP 1 - 4
+  // ----------------------------------------------------
+
+  for (
+    let vipNumber = 1;
+    vipNumber <= 4;
+    vipNumber++
+  ) {
+
+    units.push({
+
+      id:
+        `VIP${vipNumber}`,
+
+      RoomID:
+        `VIP${vipNumber}`,
+
+      RoomNumber:
+        null,
+
+      RoomName:
+        `VIP ${vipNumber}`,
+
+      RoomType:
+        "VIP",
+
+      DisplayOrder:
+        20 + vipNumber
+
+    });
+
+  }
+
+
+  // ====================================================
+  // Batch
+  // ====================================================
 
   const batch =
     writeBatch(db);
-
 
   let created = 0;
   let skipped = 0;
 
 
-  // ----------------------------------------------------
-  // สร้างห้อง 1 - 24
-  // ----------------------------------------------------
-
-  for (
-    let roomNumber = 1;
-    roomNumber <= 24;
-    roomNumber++
-  ) {
-
-    const roomId =
-      String(roomNumber);
-
-
-    // --------------------------------------------------
-    // ถ้ามีห้องอยู่แล้ว
-    // จะข้ามทันที เพื่อไม่เขียนทับข้อมูลเดิม
-    // --------------------------------------------------
+  for (const unit of units) {
 
     if (
-      existingRoomIds.has(roomId)
+      existingRoomIds.has(unit.id)
     ) {
 
       skipped++;
 
       console.log(
-        `ข้ามห้อง ${roomId} เพราะมีอยู่แล้ว`
+        `ข้าม ${unit.RoomName} เพราะมีอยู่แล้ว`
       );
 
       continue;
@@ -158,41 +149,32 @@ async function createRooms1To24() {
     }
 
 
-    // --------------------------------------------------
-    // Document Reference
-    // rooms/1
-    // rooms/2
-    // ...
-    // rooms/24
-    // --------------------------------------------------
-
     const roomRef =
       doc(
         db,
         "rooms",
-        roomId
+        unit.id
       );
 
-
-    // --------------------------------------------------
-    // ข้อมูลห้อง
-    // --------------------------------------------------
 
     batch.set(
       roomRef,
       {
 
         RoomID:
-          roomId,
+          unit.RoomID,
 
         RoomNumber:
-          roomNumber,
+          unit.RoomNumber,
 
         RoomName:
-          `ห้อง ${roomNumber}`,
+          unit.RoomName,
 
         RoomType:
-          "GUEST_ROOM",
+          unit.RoomType,
+
+        DisplayOrder:
+          unit.DisplayOrder,
 
         Status:
           "ยังไม่ได้ทำความสะอาด",
@@ -218,44 +200,41 @@ async function createRooms1To24() {
   }
 
 
-  // ----------------------------------------------------
-  // ถ้ามีห้องใหม่จึง Commit
-  // ----------------------------------------------------
+  // ====================================================
+  // Commit
+  // ====================================================
 
   if (created > 0) {
-
-    console.log(
-      `กำลังสร้าง ${created} ห้อง...`
-    );
-
-
     await batch.commit();
-
   }
 
-
-  // ----------------------------------------------------
-  // แสดงผล
-  // ----------------------------------------------------
 
   console.log(
     "======================================"
   );
 
   console.log(
-    "✅ สร้างข้อมูลห้องสำเร็จ"
+    "✅ สร้างข้อมูลหน่วยตรวจสำเร็จ"
   );
 
   console.log(
-    `สร้างใหม่: ${created} ห้อง`
+    `สร้างใหม่: ${created}`
   );
 
   console.log(
-    `มีอยู่แล้ว: ${skipped} ห้อง`
+    `มีอยู่แล้ว: ${skipped}`
   );
 
   console.log(
-    "จำนวนห้องทั้งหมดที่ระบบต้องมี: 24 ห้อง"
+    "ทั้งหมด: 24 หน่วย"
+  );
+
+  console.log(
+    "ห้องพัก: 1 - 20"
+  );
+
+  console.log(
+    "VIP: 1 - 4"
   );
 
   console.log(
@@ -267,112 +246,16 @@ async function createRooms1To24() {
 
     success: true,
 
-    created:
-      created,
+    created,
 
-    skipped:
-      skipped,
+    skipped,
 
-    total:
-      24
+    total: 24,
+
+    guestRooms: 20,
+
+    vipRooms: 4
 
   };
 
 }
-
-
-// ======================================================
-// เปิดให้ JavaScript เดิมของเว็บไซต์เรียก Firebase ได้
-// ======================================================
-
-window.HappyNightFirebase = {
-
-  // Firebase
-  app:
-    firebaseApp,
-
-  auth:
-    auth,
-
-  db:
-    db,
-
-
-  // Authentication
-  onAuthStateChanged:
-    onAuthStateChanged,
-
-  signInWithEmailAndPassword:
-    signInWithEmailAndPassword,
-
-  signOut:
-    signOut,
-
-
-  // Firestore
-  doc:
-    doc,
-
-  getDoc:
-    getDoc,
-
-  setDoc:
-    setDoc,
-
-  collection:
-    collection,
-
-  getDocs:
-    getDocs,
-
-  onSnapshot:
-    onSnapshot,
-
-  serverTimestamp:
-    serverTimestamp,
-
-  writeBatch:
-    writeBatch,
-
-
-  // ====================================================
-  // Happy Night Cleaning Functions
-  // ====================================================
-
-  createRooms1To24:
-    createRooms1To24
-
-};
-
-
-// ======================================================
-// แจ้ง JavaScript อื่นว่า Firebase พร้อมใช้งานแล้ว
-// ======================================================
-
-window.dispatchEvent(
-  new CustomEvent(
-    "firebase-ready"
-  )
-);
-
-
-// ======================================================
-// Console
-// ======================================================
-
-console.log(
-  "✅ Firebase connected:",
-  firebaseConfig.projectId
-);
-
-console.log(
-  "✅ Firebase Authentication ready"
-);
-
-console.log(
-  "✅ Cloud Firestore ready"
-);
-
-console.log(
-  "✅ Happy Night Firebase functions ready"
-);
