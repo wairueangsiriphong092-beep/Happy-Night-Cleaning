@@ -7,7 +7,8 @@ import { initializeApp }
   from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
 
 import {
-  getAuth,
+  initializeAuth,
+  browserSessionPersistence,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut
@@ -41,18 +42,42 @@ const firebaseConfig = {
 
 
 // ======================================================
-// Initialize Firebase
+// Initialize Firebase App
 // ======================================================
 
-const firebaseApp = initializeApp(firebaseConfig);
-
-const auth = getAuth(firebaseApp);
-
-const db = getFirestore(firebaseApp);
+const firebaseApp = initializeApp(
+  firebaseConfig
+);
 
 
 // ======================================================
-// เปิด Firebase API ให้ไฟล์ JavaScript เดิมเรียกใช้งาน
+// Firebase Authentication
+//
+// สำคัญ:
+// ใช้ browserSessionPersistence โดยตรง
+// เพื่อไม่ใช้ IndexedDB persistence ที่กำลังมีปัญหา
+// "Database is closing/hidden"
+// ======================================================
+
+const auth = initializeAuth(
+  firebaseApp,
+  {
+    persistence: browserSessionPersistence
+  }
+);
+
+
+// ======================================================
+// Cloud Firestore
+// ======================================================
+
+const db = getFirestore(
+  firebaseApp
+);
+
+
+// ======================================================
+// เปิด API ให้ JavaScript ระบบเดิมใช้งาน
 // ======================================================
 
 window.HappyNightFirebase = {
@@ -62,25 +87,45 @@ window.HappyNightFirebase = {
   db: db,
 
   // Authentication
-  onAuthStateChanged: onAuthStateChanged,
-  signInWithEmailAndPassword: signInWithEmailAndPassword,
-  signOut: signOut,
+  onAuthStateChanged:
+    onAuthStateChanged,
+
+  signInWithEmailAndPassword:
+    signInWithEmailAndPassword,
+
+  signOut:
+    signOut,
 
   // Firestore
-  doc: doc,
-  getDoc: getDoc,
-  setDoc: setDoc,
-  collection: collection,
-  getDocs: getDocs,
-  onSnapshot: onSnapshot,
-  serverTimestamp: serverTimestamp,
-  writeBatch: writeBatch
+  doc:
+    doc,
+
+  getDoc:
+    getDoc,
+
+  setDoc:
+    setDoc,
+
+  collection:
+    collection,
+
+  getDocs:
+    getDocs,
+
+  onSnapshot:
+    onSnapshot,
+
+  serverTimestamp:
+    serverTimestamp,
+
+  writeBatch:
+    writeBatch
 
 };
 
 
 // ======================================================
-// แจ้งระบบว่า Firebase พร้อมแล้ว
+// Console Status
 // ======================================================
 
 console.log(
@@ -93,6 +138,10 @@ console.log(
 );
 
 console.log(
+  "✅ Firebase Auth persistence: SESSION"
+);
+
+console.log(
   "✅ Cloud Firestore ready"
 );
 
@@ -101,7 +150,12 @@ console.log(
 );
 
 
-// ยิง Event หลังสร้าง window.HappyNightFirebase แล้ว
+// ======================================================
+// แจ้ง auth.js ว่า Firebase พร้อมใช้งาน
+// ======================================================
+
 window.dispatchEvent(
-  new CustomEvent("firebase-ready")
+  new CustomEvent(
+    "firebase-ready"
+  )
 );
