@@ -1,261 +1,107 @@
 // ======================================================
-// สร้างหน่วยตรวจจริงของ Happy Night Cleaning
-//
-// ห้องพัก 1 - 20
-// VIP 1 - 4
-//
-// รวมทั้งหมด 24 หน่วย
-// ไม่เขียนทับ Document ที่มีอยู่แล้ว
+// Happy Night Cleaning - Firebase Core
+// GitHub Pages + Firebase Authentication + Cloud Firestore
 // ======================================================
 
-async function createActualRooms() {
-
-  const currentUser = auth.currentUser;
-
-  if (!currentUser) {
-    throw new Error(
-      "กรุณา Login ด้วยบัญชี Admin ก่อนสร้างข้อมูลห้อง"
-    );
-  }
-
-  console.log(
-    "กำลังตรวจสอบข้อมูลห้องใน Firestore..."
-  );
-
-  // ====================================================
-  // อ่านข้อมูล rooms ที่มีอยู่
-  // ====================================================
-
-  const roomsRef = collection(
-    db,
-    "rooms"
-  );
-
-  const roomsSnapshot =
-    await getDocs(roomsRef);
-
-  const existingRoomIds =
-    new Set();
-
-  roomsSnapshot.forEach((roomDoc) => {
-    existingRoomIds.add(
-      roomDoc.id
-    );
-  });
-
-
-  // ====================================================
-  // กำหนดหน่วยตรวจจริง
-  // ====================================================
-
-  const units = [];
-
-
-  // ----------------------------------------------------
-  // ห้องพัก 1 - 20
-  // ----------------------------------------------------
-
-  for (
-    let roomNumber = 1;
-    roomNumber <= 20;
-    roomNumber++
-  ) {
-
-    units.push({
-
-      id:
-        String(roomNumber),
-
-      RoomID:
-        String(roomNumber),
-
-      RoomNumber:
-        roomNumber,
-
-      RoomName:
-        `ห้อง ${roomNumber}`,
-
-      RoomType:
-        "GUEST_ROOM",
-
-      DisplayOrder:
-        roomNumber
-
-    });
-
-  }
-
-
-  // ----------------------------------------------------
-  // VIP 1 - 4
-  // ----------------------------------------------------
-
-  for (
-    let vipNumber = 1;
-    vipNumber <= 4;
-    vipNumber++
-  ) {
-
-    units.push({
-
-      id:
-        `VIP${vipNumber}`,
-
-      RoomID:
-        `VIP${vipNumber}`,
-
-      RoomNumber:
-        null,
-
-      RoomName:
-        `VIP ${vipNumber}`,
-
-      RoomType:
-        "VIP",
-
-      DisplayOrder:
-        20 + vipNumber
-
-    });
-
-  }
-
-
-  // ====================================================
-  // Batch
-  // ====================================================
-
-  const batch =
-    writeBatch(db);
-
-  let created = 0;
-  let skipped = 0;
-
-
-  for (const unit of units) {
-
-    if (
-      existingRoomIds.has(unit.id)
-    ) {
-
-      skipped++;
-
-      console.log(
-        `ข้าม ${unit.RoomName} เพราะมีอยู่แล้ว`
-      );
-
-      continue;
-
-    }
-
-
-    const roomRef =
-      doc(
-        db,
-        "rooms",
-        unit.id
-      );
-
-
-    batch.set(
-      roomRef,
-      {
-
-        RoomID:
-          unit.RoomID,
-
-        RoomNumber:
-          unit.RoomNumber,
-
-        RoomName:
-          unit.RoomName,
-
-        RoomType:
-          unit.RoomType,
-
-        DisplayOrder:
-          unit.DisplayOrder,
-
-        Status:
-          "ยังไม่ได้ทำความสะอาด",
-
-        AssignedHousekeeper:
-          "",
-
-        Active:
-          true,
-
-        CreatedAt:
-          serverTimestamp(),
-
-        UpdatedAt:
-          serverTimestamp()
-
-      }
-    );
-
-
-    created++;
-
-  }
-
-
-  // ====================================================
-  // Commit
-  // ====================================================
-
-  if (created > 0) {
-    await batch.commit();
-  }
-
-
-  console.log(
-    "======================================"
-  );
-
-  console.log(
-    "✅ สร้างข้อมูลหน่วยตรวจสำเร็จ"
-  );
-
-  console.log(
-    `สร้างใหม่: ${created}`
-  );
-
-  console.log(
-    `มีอยู่แล้ว: ${skipped}`
-  );
-
-  console.log(
-    "ทั้งหมด: 24 หน่วย"
-  );
-
-  console.log(
-    "ห้องพัก: 1 - 20"
-  );
-
-  console.log(
-    "VIP: 1 - 4"
-  );
-
-  console.log(
-    "======================================"
-  );
-
-
-  return {
-
-    success: true,
-
-    created,
-
-    skipped,
-
-    total: 24,
-
-    guestRooms: 20,
-
-    vipRooms: 4
-
-  };
-
-}
+import { initializeApp }
+  from "https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js";
+
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut
+} from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
+
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  collection,
+  getDocs,
+  onSnapshot,
+  serverTimestamp,
+  writeBatch
+} from "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
+
+
+// ======================================================
+// Firebase Configuration
+// ======================================================
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBC9FHZENjOXX91Kcx_DTEXA1wjv8bys5E",
+  authDomain: "happy-night-cleaning.firebaseapp.com",
+  projectId: "happy-night-cleaning",
+  storageBucket: "happy-night-cleaning.firebasestorage.app",
+  messagingSenderId: "973289542982",
+  appId: "1:973289542982:web:9ceffb5794f47b7b038147"
+};
+
+
+// ======================================================
+// Initialize Firebase
+// ======================================================
+
+const firebaseApp = initializeApp(firebaseConfig);
+
+const auth = getAuth(firebaseApp);
+
+const db = getFirestore(firebaseApp);
+
+
+// ======================================================
+// เปิด Firebase API ให้ไฟล์ JavaScript เดิมเรียกใช้งาน
+// ======================================================
+
+window.HappyNightFirebase = {
+
+  app: firebaseApp,
+  auth: auth,
+  db: db,
+
+  // Authentication
+  onAuthStateChanged: onAuthStateChanged,
+  signInWithEmailAndPassword: signInWithEmailAndPassword,
+  signOut: signOut,
+
+  // Firestore
+  doc: doc,
+  getDoc: getDoc,
+  setDoc: setDoc,
+  collection: collection,
+  getDocs: getDocs,
+  onSnapshot: onSnapshot,
+  serverTimestamp: serverTimestamp,
+  writeBatch: writeBatch
+
+};
+
+
+// ======================================================
+// แจ้งระบบว่า Firebase พร้อมแล้ว
+// ======================================================
+
+console.log(
+  "✅ Firebase connected:",
+  firebaseConfig.projectId
+);
+
+console.log(
+  "✅ Firebase Authentication ready"
+);
+
+console.log(
+  "✅ Cloud Firestore ready"
+);
+
+console.log(
+  "✅ Happy Night Firebase core ready"
+);
+
+
+// ยิง Event หลังสร้าง window.HappyNightFirebase แล้ว
+window.dispatchEvent(
+  new CustomEvent("firebase-ready")
+);
