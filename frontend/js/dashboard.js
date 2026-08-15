@@ -1,17 +1,29 @@
 /**
  * dashboard.js
  * หน้าหลักหลังเข้าสู่ระบบ และหน้า Admin Dashboard (KPI, กราฟ, ตัวกรอง)
- * ข้อมูลทั้งหมดดึงจาก Google Sheets ผ่าน API จริง ไม่มีข้อมูล Mock
+ *
+ * Admin Dashboard:
+ * - Firestore-first สำหรับ Dashboard แบบรายวันและไม่มีตัวกรองเพิ่มเติม
+ * - Real-time ด้วย onSnapshot()
+ * - หาก Firestore ใช้งานไม่ได้/ไม่มี Snapshot จะ Fallback ไป Google Apps Script อัตโนมัติ
+ * - ช่วงหลายวันและตัวกรองละเอียดใช้ Google Apps Script เพื่อรักษา Logic เดิม
+ *
+ * หน้า Home, ระบบแม่บ้าน, ผู้ตรวจสอบ, Login และการบันทึก/แก้ไขข้อมูลยังใช้ระบบเดิม
  */
 
 const DashboardView = {
   charts: {},
 
+  // Firestore listener ใช้เฉพาะหน้า Admin Dashboard
+  adminFirestoreUnsubscribe: null,
+  adminFirestoreDate: '',
+  adminDataSource: '',
+
   async renderHome(container) {
     const user = Auth.getCurrentUser();
     Utils.showLoading('กำลังโหลดข้อมูลหน้าหลัก...');
     try {
-      // โหลดข้อมูลหน้า Home เพียงคำขอเดียว ป้องกัน GAS ทำงานหนัก 3-4 คำขอพร้อมกัน
+      // หน้า Home ยังคงใช้ระบบเดิมผ่าน GAS เพื่อไม่กระทบแม่บ้าน/ผู้ตรวจสอบ
       const homeData = await Api.call('getHomeData', {}, {
         timeoutMs: APP_CONFIG.HOME_REQUEST_TIMEOUT_MS || 120000
       });
@@ -69,9 +81,15 @@ const DashboardView = {
 
   async renderAdminDashboard(container) {
     const today = Utils.todayISO();
+
+    // ป้องกัน listener เก่าค้างเมื่อเปิด Dashboard ซ้ำ
+    this.stopAdminFirestoreListener();
+
     this.adminContainer = container;
     this.adminFilters = { dateFrom: today, dateTo: today };
     this.adminData = null;
+    this.adminDataSource = '';
+
     container.innerHTML = `
       <div class="hci-page-header">
         <div><h1>Admin Dashboard</h1><p class="hci-subtitle">Daily Operational Dashboard + Historical Analytics • เวลาไทย (ICT)</p></div>
@@ -101,57 +119,502 @@ const DashboardView = {
   bindAdminFilters() {
     const form = document.getElementById('dashFilterForm');
     if (!form) return;
+
     form.addEventListener('submit', async event => {
       event.preventDefault();
       this.adminFilters = Object.fromEntries(new FormData(form).entries());
       await this.loadAdminDashboard(true);
     });
+
     document.querySelectorAll('.hci-quick-filter').forEach(button => {
       button.addEventListener('click', async () => {
         const range = dashboardQuickRange(button.dataset.range);
-        document.querySelectorAll('.hci-quick-filter').forEach(item => item.classList.toggle('active', item === button));
+
+        document.querySelectorAll('.hci-quick-filter').forEach(item => {
+          item.classList.toggle('active', item === button);
+        });
+
         if (range) {
           form.elements.dateFrom.value = range.dateFrom;
           form.elements.dateTo.value = range.dateTo;
-          this.adminFilters = Object.assign(this.adminFilters || {}, range);
+
+          // Quick Filter วันที่ควรคงค่าตัวกรองอื่นตาม UI ปัจจุบันไว้
+          this.adminFilters = Object.assign(
+            {},
+            this.adminFilters || {},
+            range
+          );
+
           await this.loadAdminDashboard(true);
         } else {
           form.elements.dateFrom.focus();
         }
       });
     });
-    ['dateFrom', 'dateTo'].forEach(name => form.elements[name].addEventListener('change', () => {
-      document.querySelectorAll('.hci-quick-filter').forEach(item => item.classList.toggle('active', item.dataset.range === 'custom'));
-    }));
+
+    ['dateFrom', 'dateTo'].forEach(name => {
+      form.elements[name].addEventListener('change', () => {
+        document.querySelectorAll('.hci-quick-filter').forEach(item => {
+          item.classList.toggle('active', item.dataset.range === 'custom');
+        });
+      });
+    });
+  },
+
+  stopAdminFirestoreListener() {
+    if (typeof this.adminFirestoreUnsubscribe === 'function') {
+      try {
+        this.adminFirestoreUnsubscribe();
+      } catch (error) {
+        console.warn('หยุด Firestore listener ไม่สำเร็จ:', error);
+      }
+    }
+
+    this.adminFirestoreUnsubscribe = null;
+    this.adminFirestoreDate = '';
+  },
+
+  applyAdminDashboardData(rawData, options = {}) {
+    const content = document.getElementById('adminDashboardContent');
+    if (!content) {
+      this.stopAdminFirestoreListener();
+      return null;
+    }
+
+    const dash = normalizeDashboardData(rawData);
+    const source = options.source || 'GAS';
+    const refreshFilters = options.refreshFilters !== false;
+
+    this.adminData = dash;
+    this.adminDataSource = source;
+
+    if (refreshFilters) {
+      populateDashboardFilters(
+        dash.filterOptions,
+        this.adminFilters || {}
+      );
+    }
+
+    renderAdminDashboardContent(content, dash);
+    bindAdminDashboardActions(dash);
+    renderCharts(dash);
+
+    const updated = document.getElementById('dashUpdatedAt');
+    if (updated) {
+      const sourceLabel =
+        source === 'FIRESTORE'
+          ? 'Firestore • Real-time'
+          : 'Google Apps Script';
+
+      updated.textContent =
+        `ข้อมูลล่าสุด ${dashboardDateTime(dash.meta.generatedAt)} • ${sourceLabel}`;
+    }
+
+    return dash;
+  },
+
+  async handleAdminFirestoreRuntimeError(error) {
+    console.warn(
+      '⚠️ Firestore Dashboard Real-time มีปัญหา กำลังใช้ GAS สำรอง:',
+      error
+    );
+
+    this.stopAdminFirestoreListener();
+
+    // ถ้ายังอยู่หน้า Admin Dashboard ให้โหลดข้อมูลสดจาก GAS
+    if (document.getElementById('adminDashboardContent')) {
+      try {
+        await this.loadAdminDashboard(false, true);
+        Utils.toast(
+          'warning',
+          'Firestore มีปัญหาชั่วคราว ระบบเปลี่ยนไปใช้ Google Apps Script แล้ว'
+        );
+      } catch (_) {
+        // loadAdminDashboard จัดการ error UI ภายในอยู่แล้ว
+      }
+    }
   },
 
   async loadAdminDashboard(showToast, forceRefresh = false) {
     const content = document.getElementById('adminDashboardContent');
     const button = document.getElementById('dashFilterButton');
+
     if (!content) return;
-    if (button) { button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลด...'; }
+
+    if (button) {
+      button.disabled = true;
+      button.innerHTML =
+        '<i class="fa-solid fa-spinner fa-spin"></i> กำลังโหลด...';
+    }
+
     content.classList.add('is-loading');
+
+    // ทุกครั้งที่เปลี่ยนช่วง/ตัวกรอง ให้หยุด listener เดิมก่อน
+    this.stopAdminFirestoreListener();
+
+    const requestFilters =
+      Object.assign({}, this.adminFilters || {});
+
+    let firestoreError = null;
+    let loadedFromFirestore = false;
+
     try {
-      const requestFilters = Object.assign({}, this.adminFilters || {});
-      if (forceRefresh) requestFilters.forceRefresh = true;
-      const dash = normalizeDashboardData(await Api.call('getAdminDashboard', requestFilters, { timeoutMs: APP_CONFIG.REQUEST_TIMEOUT_MS || 90000 }));
-      this.adminData = dash;
-      populateDashboardFilters(dash.filterOptions, this.adminFilters);
-      renderAdminDashboardContent(content, dash);
-      bindAdminDashboardActions(dash);
-      renderCharts(dash);
-      const updated = document.getElementById('dashUpdatedAt');
-      if (updated) updated.textContent = `ข้อมูลล่าสุด ${dashboardDateTime(dash.meta.generatedAt)}`;
-      if (showToast) Utils.toast('success', 'อัปเดต Dashboard สำเร็จ');
+      // --------------------------------------------------
+      // 1) Firestore-first
+      // ใช้เฉพาะ Single-day + ไม่มีตัวกรองละเอียด
+      // forceRefresh=true จะบังคับ GAS เพื่ออ่าน Source of Truth ล่าสุด
+      // --------------------------------------------------
+      if (
+        !forceRefresh &&
+        dashboardCanUseFirestore(requestFilters)
+      ) {
+        try {
+          const dateKey =
+            requestFilters.dateFrom ||
+            Utils.todayISO();
+
+          const subscription =
+            await dashboardSubscribeFirestore(
+              dateKey,
+              realtimeData => {
+                // ถ้าเปลี่ยนหน้า/เปลี่ยน filter ไปแล้ว ห้าม render ข้อมูลเก่าทับ
+                if (
+                  !document.getElementById('adminDashboardContent') ||
+                  !dashboardCanUseFirestore(this.adminFilters || {}) ||
+                  String((this.adminFilters || {}).dateFrom || '') !==
+                    String(dateKey)
+                ) {
+                  this.stopAdminFirestoreListener();
+                  return;
+                }
+
+                this.applyAdminDashboardData(
+                  realtimeData,
+                  {
+                    source: 'FIRESTORE',
+                    refreshFilters: false
+                  }
+                );
+
+                console.log(
+                  '🔄 Admin Dashboard อัปเดต Real-time จาก Firestore:',
+                  dateKey
+                );
+              },
+              runtimeError => {
+                this.handleAdminFirestoreRuntimeError(runtimeError);
+              }
+            );
+
+          this.adminFirestoreUnsubscribe =
+            subscription.unsubscribe;
+
+          this.adminFirestoreDate =
+            dateKey;
+
+          this.applyAdminDashboardData(
+            subscription.data,
+            {
+              source: 'FIRESTORE',
+              refreshFilters: true
+            }
+          );
+
+          loadedFromFirestore = true;
+
+          console.log(
+            '✅ Admin Dashboard โหลดจาก Firestore:',
+            dateKey
+          );
+
+          if (showToast) {
+            Utils.toast(
+              'success',
+              'อัปเดต Dashboard จาก Firestore สำเร็จ'
+            );
+          }
+        } catch (error) {
+          firestoreError = error;
+
+          console.warn(
+            '⚠️ Firestore Dashboard ใช้งานไม่ได้ จะ Fallback ไป GAS:',
+            error
+          );
+
+          this.stopAdminFirestoreListener();
+        }
+      }
+
+      // --------------------------------------------------
+      // 2) Google Apps Script Fallback
+      // - Firestore error / ไม่มี Snapshot
+      // - ช่วงหลายวัน
+      // - มีตัวกรองละเอียด
+      // - forceRefresh
+      // --------------------------------------------------
+      if (!loadedFromFirestore) {
+        const gasFilters =
+          Object.assign({}, requestFilters);
+
+        if (forceRefresh) {
+          gasFilters.forceRefresh = true;
+        }
+
+        const gasData =
+          await Api.call(
+            'getAdminDashboard',
+            gasFilters,
+            {
+              timeoutMs:
+                APP_CONFIG.REQUEST_TIMEOUT_MS ||
+                90000
+            }
+          );
+
+        this.applyAdminDashboardData(
+          gasData,
+          {
+            source: 'GAS',
+            refreshFilters: true
+          }
+        );
+
+        console.log(
+          firestoreError
+            ? '✅ Admin Dashboard Fallback ไป GAS สำเร็จ'
+            : '✅ Admin Dashboard โหลดจาก GAS ตามเงื่อนไขตัวกรอง'
+        );
+
+        if (showToast) {
+          Utils.toast(
+            'success',
+            firestoreError
+              ? 'Firestore ใช้งานไม่ได้ชั่วคราว โหลด Dashboard ผ่านระบบสำรองสำเร็จ'
+              : 'อัปเดต Dashboard สำเร็จ'
+          );
+        }
+      }
     } catch (error) {
-      renderErrorState(content, 'ไม่สามารถโหลด Dashboard ได้', () => this.loadAdminDashboard(false), error.message);
+      const detail =
+        firestoreError
+          ? `${error.message || 'โหลดข้อมูลไม่สำเร็จ'} | Firestore: ${firestoreError.message || firestoreError}`
+          : (error.message || 'โหลดข้อมูลไม่สำเร็จ');
+
+      renderErrorState(
+        content,
+        'ไม่สามารถโหลด Dashboard ได้',
+        () => this.loadAdminDashboard(false),
+        detail
+      );
     } finally {
       content.classList.remove('is-loading');
-      if (button) { button.disabled = false; button.innerHTML = '<i class="fa-solid fa-filter"></i> กรองข้อมูล'; }
+
+      if (button) {
+        button.disabled = false;
+        button.innerHTML =
+          '<i class="fa-solid fa-filter"></i> กรองข้อมูล';
+      }
+
       Utils.hideLoading();
     }
   }
 };
+
+
+/**
+ * ตรวจว่า Request นี้สามารถใช้ Daily Snapshot จาก Firestore ได้หรือไม่
+ *
+ * Firestore Daily Snapshot ในปัจจุบันเก็บข้อมูล 1 วันแบบไม่ผ่านตัวกรอง
+ * ดังนั้น:
+ * - Single day + ไม่มี filter เพิ่มเติม => Firestore
+ * - Multi-day / filtered => GAS
+ */
+function dashboardCanUseFirestore(filters) {
+  const user =
+    typeof Auth !== 'undefined'
+      ? Auth.getCurrentUser()
+      : null;
+
+  if (
+    !user ||
+    String(user.Role || '').toUpperCase() !== 'ADMIN'
+  ) {
+    return false;
+  }
+
+  const safe =
+    filters && typeof filters === 'object'
+      ? filters
+      : {};
+
+  const dateFrom =
+    safe.dateFrom ||
+    Utils.todayISO();
+
+  const dateTo =
+    safe.dateTo ||
+    dateFrom;
+
+  if (
+    !dateFrom ||
+    dateFrom !== dateTo
+  ) {
+    return false;
+  }
+
+  const advancedFilterKeys = [
+    'housekeeperId',
+    'inspectorId',
+    'roomId',
+    'status',
+    'severity',
+    'category'
+  ];
+
+  return !advancedFilterKeys.some(key => {
+    return String(safe[key] || '').trim() !== '';
+  });
+}
+
+
+/**
+ * รอ Firebase Core เดิมจาก firebase.js
+ * ไม่แก้ firebase.js และไม่ initialize Firebase ซ้ำ
+ */
+async function dashboardWaitForFirebase(timeoutMs = 10000) {
+  const startedAt =
+    Date.now();
+
+  while (
+    Date.now() - startedAt <
+    timeoutMs
+  ) {
+    const firebase =
+      window.HappyNightFirebase;
+
+    if (
+      firebase &&
+      firebase.db &&
+      typeof firebase.doc === 'function' &&
+      typeof firebase.onSnapshot === 'function'
+    ) {
+      return firebase;
+    }
+
+    await new Promise(resolve => {
+      setTimeout(resolve, 100);
+    });
+  }
+
+  throw new Error(
+    'Firebase ยังไม่พร้อมใช้งานสำหรับ Dashboard'
+  );
+}
+
+
+/**
+ * Subscribe Daily Dashboard Document
+ *
+ * - Promise resolve ครั้งแรกเมื่อได้ Snapshot
+ * - หลังจากนั้นเรียก onRealtimeData ทุกครั้งที่ Firestore เปลี่ยน
+ * - หาก listener error หลังเริ่มทำงาน จะเรียก onRuntimeError
+ */
+async function dashboardSubscribeFirestore(
+  dateKey,
+  onRealtimeData,
+  onRuntimeError
+) {
+  const firebase =
+    await dashboardWaitForFirebase();
+
+  const ref =
+    firebase.doc(
+      firebase.db,
+      'dashboardDaily',
+      dateKey
+    );
+
+  return new Promise(
+    (resolve, reject) => {
+      let initialResolved = false;
+      let unsubscribe = null;
+
+      const failInitial =
+        error => {
+          if (initialResolved) {
+            if (
+              typeof onRuntimeError ===
+              'function'
+            ) {
+              onRuntimeError(error);
+            }
+            return;
+          }
+
+          initialResolved = true;
+
+          if (
+            typeof unsubscribe ===
+            'function'
+          ) {
+            try {
+              unsubscribe();
+            } catch (_) {}
+          }
+
+          reject(error);
+        };
+
+      try {
+        unsubscribe =
+          firebase.onSnapshot(
+            ref,
+            snapshot => {
+              if (!snapshot.exists()) {
+                const notFound =
+                  new Error(
+                    `ไม่พบ Firestore Dashboard Snapshot วันที่ ${dateKey}`
+                  );
+
+                notFound.code =
+                  'FIRESTORE_DASHBOARD_NOT_FOUND';
+
+                failInitial(notFound);
+                return;
+              }
+
+              const data =
+                snapshot.data();
+
+              if (!initialResolved) {
+                initialResolved = true;
+
+                resolve({
+                  data,
+                  unsubscribe
+                });
+
+                return;
+              }
+
+              if (
+                typeof onRealtimeData ===
+                'function'
+              ) {
+                onRealtimeData(data);
+              }
+            },
+            error => {
+              failInitial(error);
+            }
+          );
+      } catch (error) {
+        failInitial(error);
+      }
+    }
+  );
+}
+
 
 /**
  * ทำให้ Dashboard รองรับชีตที่ยังไม่มีประวัติการตรวจและ Backend เวอร์ชันเก่า
