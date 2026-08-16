@@ -3,10 +3,11 @@
  * หน้าหลักหลังเข้าสู่ระบบ และหน้า Admin Dashboard (KPI, กราฟ, ตัวกรอง)
  *
  * Admin Dashboard:
- * - Firestore-first สำหรับ Dashboard แบบรายวันและไม่มีตัวกรองเพิ่มเติม
- * - Real-time ด้วย onSnapshot()
- * - หาก Firestore ใช้งานไม่ได้/ไม่มี Snapshot จะ Fallback ไป Google Apps Script อัตโนมัติ
- * - ช่วงหลายวันและตัวกรองละเอียดใช้ Google Apps Script เพื่อรักษา Logic เดิม
+ * - Firestore-first สำหรับวันเดียวและช่วงวันที่ (สูงสุด 62 วัน)
+ * - Real-time ด้วย onSnapshot() ของ dashboardDaily ทุกวันที่อยู่ในช่วง
+ * - รวมผลแบบห้องไม่ซ้ำ และใช้ผลตรวจล่าสุดของแต่ละห้องในช่วงวันที่เลือก
+ * - หาก Firestore ใช้งานไม่ได้ / มีวันใดไม่มี Snapshot จะ Fallback ไป Google Apps Script อัตโนมัติ
+ * - ตัวกรองพนักงาน/ผู้ตรวจ/ห้อง/สถานะยังใช้ Google Apps Script เพื่อรักษา Logic เดิมอย่างแม่นยำ
  *
  * หน้า Home, ระบบแม่บ้าน, ผู้ตรวจสอบ, Login และการบันทึก/แก้ไขข้อมูลยังใช้ระบบเดิม
  */
@@ -261,28 +262,53 @@ const DashboardView = {
     try {
       // --------------------------------------------------
       // 1) Firestore-first
-      // ใช้เฉพาะ Single-day + ไม่มีตัวกรองละเอียด
-      // forceRefresh=true จะบังคับ GAS เพื่ออ่าน Source of Truth ล่าสุด
+      //
+      // รองรับ:
+      // - วันเดียว
+      // - 7 วันล่าสุด
+      // - เดือนนี้
+      // - กำหนดเอง สูงสุด 62 วัน
+      //
+      // เงื่อนไข:
+      // - ต้องมี dashboardDaily ครบทุกวันในช่วง
+      // - ไม่มีตัวกรองละเอียด
+      // - forceRefresh=true จะบังคับ GAS
       // --------------------------------------------------
       if (
         !forceRefresh &&
         dashboardCanUseFirestore(requestFilters)
       ) {
         try {
-          const dateKey =
+          const dateFrom =
             requestFilters.dateFrom ||
             Utils.todayISO();
 
+          const dateTo =
+            requestFilters.dateTo ||
+            dateFrom;
+
           const subscription =
-            await dashboardSubscribeFirestore(
-              dateKey,
+            await dashboardSubscribeFirestoreRange(
+              dateFrom,
+              dateTo,
               realtimeData => {
-                // ถ้าเปลี่ยนหน้า/เปลี่ยน filter ไปแล้ว ห้าม render ข้อมูลเก่าทับ
+                const activeFilters =
+                  this.adminFilters || {};
+
+                const activeDateFrom =
+                  activeFilters.dateFrom ||
+                  Utils.todayISO();
+
+                const activeDateTo =
+                  activeFilters.dateTo ||
+                  activeDateFrom;
+
+                // ถ้าเปลี่ยนหน้า/ช่วง/ตัวกรองไปแล้ว ห้ามข้อมูลจาก listener เก่าทับ
                 if (
                   !document.getElementById('adminDashboardContent') ||
-                  !dashboardCanUseFirestore(this.adminFilters || {}) ||
-                  String((this.adminFilters || {}).dateFrom || '') !==
-                    String(dateKey)
+                  !dashboardCanUseFirestore(activeFilters) ||
+                  String(activeDateFrom) !== String(dateFrom) ||
+                  String(activeDateTo) !== String(dateTo)
                 ) {
                   this.stopAdminFirestoreListener();
                   return;
@@ -298,7 +324,9 @@ const DashboardView = {
 
                 console.log(
                   '🔄 Admin Dashboard อัปเดต Real-time จาก Firestore:',
-                  dateKey
+                  dateFrom === dateTo
+                    ? dateFrom
+                    : `${dateFrom} → ${dateTo}`
                 );
               },
               runtimeError => {
@@ -310,7 +338,9 @@ const DashboardView = {
             subscription.unsubscribe;
 
           this.adminFirestoreDate =
-            dateKey;
+            dateFrom === dateTo
+              ? dateFrom
+              : `${dateFrom}..${dateTo}`;
 
           this.applyAdminDashboardData(
             subscription.data,
@@ -324,20 +354,24 @@ const DashboardView = {
 
           console.log(
             '✅ Admin Dashboard โหลดจาก Firestore:',
-            dateKey
+            dateFrom === dateTo
+              ? dateFrom
+              : `${dateFrom} → ${dateTo}`
           );
 
           if (showToast) {
             Utils.toast(
               'success',
-              'อัปเดต Dashboard จาก Firestore สำเร็จ'
+              dateFrom === dateTo
+                ? 'อัปเดต Dashboard จาก Firestore สำเร็จ'
+                : 'อัปเดต Dashboard ช่วงวันที่จาก Firestore แบบ Real-time สำเร็จ'
             );
           }
         } catch (error) {
           firestoreError = error;
 
           console.warn(
-            '⚠️ Firestore Dashboard ใช้งานไม่ได้ จะ Fallback ไป GAS:',
+            '⚠️ Firestore Dashboard ใช้งานไม่ได้/มี Snapshot ไม่ครบ จะ Fallback ไป GAS:',
             error
           );
 
@@ -347,8 +381,11 @@ const DashboardView = {
 
       // --------------------------------------------------
       // 2) Google Apps Script Fallback
-      // - Firestore error / ไม่มี Snapshot
-      // - ช่วงหลายวัน
+      //
+      // ใช้เมื่อ:
+      // - Firestore error
+      // - มีวันใดในช่วงไม่มี dashboardDaily
+      // - ช่วงเกิน 62 วัน
       // - มีตัวกรองละเอียด
       // - forceRefresh
       // --------------------------------------------------
@@ -389,7 +426,7 @@ const DashboardView = {
           Utils.toast(
             'success',
             firestoreError
-              ? 'Firestore ใช้งานไม่ได้ชั่วคราว โหลด Dashboard ผ่านระบบสำรองสำเร็จ'
+              ? 'Firestore Snapshot ในช่วงวันที่ยังไม่ครบ ระบบใช้ Google Apps Script สำรอง'
               : 'อัปเดต Dashboard สำเร็จ'
           );
         }
@@ -422,12 +459,19 @@ const DashboardView = {
 
 
 /**
- * ตรวจว่า Request นี้สามารถใช้ Daily Snapshot จาก Firestore ได้หรือไม่
+ * จำนวนวันสูงสุดที่เปิด Firestore listener พร้อมกัน
+ * 62 วันครอบคลุม Today / Yesterday / 7 Days / Month และช่วงกำหนดเองทั่วไป
+ * ช่วงที่ยาวกว่านี้จะใช้ GAS เพื่อไม่เปิด listener มากเกินจำเป็น
+ */
+const DASHBOARD_FIRESTORE_MAX_RANGE_DAYS = 62;
+
+
+/**
+ * ตรวจว่า Request นี้สามารถใช้ Firestore Daily Snapshots ได้หรือไม่
  *
- * Firestore Daily Snapshot ในปัจจุบันเก็บข้อมูล 1 วันแบบไม่ผ่านตัวกรอง
- * ดังนั้น:
- * - Single day + ไม่มี filter เพิ่มเติม => Firestore
- * - Multi-day / filtered => GAS
+ * รองรับช่วงวันที่หลายวันแล้ว แต่ตัวกรองละเอียดบางชนิดยังใช้ GAS
+ * เพราะ Daily Snapshot เก็บผลล่าสุดรายห้องของแต่ละวัน ไม่ได้เก็บทุกการตรวจซ้ำ
+ * จึงไม่ควรกรอง Housekeeper/Inspector ฝั่ง Client แล้วทำให้ผลคลาดเคลื่อน
  */
 function dashboardCanUseFirestore(filters) {
   const user =
@@ -455,13 +499,22 @@ function dashboardCanUseFirestore(filters) {
     safe.dateTo ||
     dateFrom;
 
+  const dayCount =
+    dashboardRangeDayCount(
+      dateFrom,
+      dateTo
+    );
+
   if (
-    !dateFrom ||
-    dateFrom !== dateTo
+    !dayCount ||
+    dayCount < 1 ||
+    dayCount > DASHBOARD_FIRESTORE_MAX_RANGE_DAYS
   ) {
     return false;
   }
 
+  // รักษาความแม่นยำของ Logic เดิม:
+  // ตัวกรองเหล่านี้ให้ GAS เป็นผู้คำนวณ
   const advancedFilterKeys = [
     'housekeeperId',
     'inspectorId',
@@ -474,6 +527,108 @@ function dashboardCanUseFirestore(filters) {
   return !advancedFilterKeys.some(key => {
     return String(safe[key] || '').trim() !== '';
   });
+}
+
+
+/**
+ * จำนวนวันแบบรวมวันต้นและวันปลาย
+ */
+function dashboardRangeDayCount(dateFrom, dateTo) {
+  const start =
+    dashboardParseIsoDateUtc(dateFrom);
+
+  const end =
+    dashboardParseIsoDateUtc(dateTo);
+
+  if (
+    !start ||
+    !end ||
+    start.getTime() > end.getTime()
+  ) {
+    return 0;
+  }
+
+  return (
+    Math.floor(
+      (
+        end.getTime() -
+        start.getTime()
+      ) / 86400000
+    ) + 1
+  );
+}
+
+
+/**
+ * แปลง yyyy-MM-dd เป็น Date แบบ UTC
+ * เพื่อไม่ให้ Timezone ของเครื่องผู้ใช้ทำให้วันเลื่อน
+ */
+function dashboardParseIsoDateUtc(value) {
+  const match =
+    String(value || '')
+      .match(
+        /^(\d{4})-(\d{2})-(\d{2})$/
+      );
+
+  if (!match) {
+    return null;
+  }
+
+  const date =
+    new Date(
+      Date.UTC(
+        Number(match[1]),
+        Number(match[2]) - 1,
+        Number(match[3])
+      )
+    );
+
+  return isNaN(date.getTime())
+    ? null
+    : date;
+}
+
+
+/**
+ * คืนรายการวันที่ทั้งหมดในช่วง เช่น
+ * 2026-08-15 -> 2026-08-17
+ * = ['2026-08-15','2026-08-16','2026-08-17']
+ */
+function dashboardDateKeysInRange(dateFrom, dateTo) {
+  const start =
+    dashboardParseIsoDateUtc(dateFrom);
+
+  const end =
+    dashboardParseIsoDateUtc(dateTo);
+
+  if (
+    !start ||
+    !end ||
+    start.getTime() > end.getTime()
+  ) {
+    return [];
+  }
+
+  const result = [];
+  const cursor =
+    new Date(start.getTime());
+
+  while (
+    cursor.getTime() <=
+    end.getTime()
+  ) {
+    result.push(
+      cursor
+        .toISOString()
+        .slice(0, 10)
+    );
+
+    cursor.setUTCDate(
+      cursor.getUTCDate() + 1
+    );
+  }
+
+  return result;
 }
 
 
@@ -513,105 +668,1630 @@ async function dashboardWaitForFirebase(timeoutMs = 10000) {
 
 
 /**
- * Subscribe Daily Dashboard Document
+ * Subscribe dashboardDaily ทุกวันในช่วงวันที่
  *
- * - Promise resolve ครั้งแรกเมื่อได้ Snapshot
- * - หลังจากนั้นเรียก onRealtimeData ทุกครั้งที่ Firestore เปลี่ยน
- * - หาก listener error หลังเริ่มทำงาน จะเรียก onRuntimeError
+ * เงื่อนไขความถูกต้อง:
+ * - ต้องมี Document ครบทุกวันในช่วง
+ * - หากขาดแม้แต่ 1 วัน จะ Reject และให้ loadAdminDashboard Fallback ไป GAS
+ *
+ * หลัง Snapshot ครบ:
+ * - รวมข้อมูลทุกวัน
+ * - ห้องเดียวกันนับ 1 ห้อง
+ * - ใช้ Inspection ล่าสุดของห้องนั้นในช่วง
+ * - เมื่อ Document วันใดเปลี่ยน จะ Merge ใหม่และ Render Real-time
  */
-async function dashboardSubscribeFirestore(
-  dateKey,
+async function dashboardSubscribeFirestoreRange(
+  dateFrom,
+  dateTo,
   onRealtimeData,
   onRuntimeError
 ) {
   const firebase =
     await dashboardWaitForFirebase();
 
-  const ref =
-    firebase.doc(
-      firebase.db,
-      'dashboardDaily',
-      dateKey
+  const dateKeys =
+    dashboardDateKeysInRange(
+      dateFrom,
+      dateTo
     );
+
+  if (!dateKeys.length) {
+    throw new Error(
+      'ช่วงวันที่สำหรับ Firestore ไม่ถูกต้อง'
+    );
+  }
+
+  if (
+    dateKeys.length >
+    DASHBOARD_FIRESTORE_MAX_RANGE_DAYS
+  ) {
+    throw new Error(
+      `Firestore Real-time รองรับช่วงสูงสุด ${DASHBOARD_FIRESTORE_MAX_RANGE_DAYS} วัน`
+    );
+  }
 
   return new Promise(
     (resolve, reject) => {
-      let initialResolved = false;
-      let unsubscribe = null;
+      const dataByDate = {};
+      const readyDates =
+        new Set();
 
-      const failInitial =
-        error => {
-          if (initialResolved) {
-            if (
-              typeof onRuntimeError ===
-              'function'
-            ) {
-              onRuntimeError(error);
-            }
+      const unsubscribers = [];
+
+      let initialResolved =
+        false;
+
+      let closed =
+        false;
+
+      const unsubscribeAll =
+        () => {
+          if (closed) {
             return;
           }
 
-          initialResolved = true;
+          closed = true;
 
-          if (
-            typeof unsubscribe ===
-            'function'
-          ) {
-            try {
-              unsubscribe();
-            } catch (_) {}
-          }
-
-          reject(error);
-        };
-
-      try {
-        unsubscribe =
-          firebase.onSnapshot(
-            ref,
-            snapshot => {
-              if (!snapshot.exists()) {
-                const notFound =
-                  new Error(
-                    `ไม่พบ Firestore Dashboard Snapshot วันที่ ${dateKey}`
-                  );
-
-                notFound.code =
-                  'FIRESTORE_DASHBOARD_NOT_FOUND';
-
-                failInitial(notFound);
-                return;
-              }
-
-              const data =
-                snapshot.data();
-
-              if (!initialResolved) {
-                initialResolved = true;
-
-                resolve({
-                  data,
-                  unsubscribe
-                });
-
-                return;
-              }
-
+          unsubscribers.forEach(
+            unsubscribe => {
               if (
-                typeof onRealtimeData ===
+                typeof unsubscribe ===
                 'function'
               ) {
-                onRealtimeData(data);
+                try {
+                  unsubscribe();
+                } catch (_) {}
               }
-            },
-            error => {
-              failInitial(error);
             }
           );
-      } catch (error) {
-        failInitial(error);
+        };
+
+      const fail =
+        error => {
+          if (closed) {
+            return;
+          }
+
+          if (!initialResolved) {
+            unsubscribeAll();
+            reject(error);
+            return;
+          }
+
+          unsubscribeAll();
+
+          if (
+            typeof onRuntimeError ===
+            'function'
+          ) {
+            onRuntimeError(error);
+          }
+        };
+
+      const emitMerged =
+        () => {
+          if (
+            closed ||
+            readyDates.size !==
+              dateKeys.length
+          ) {
+            return;
+          }
+
+          let mergedData;
+
+          try {
+            mergedData =
+              dashboardMergeDailyFirestoreData(
+                dataByDate,
+                dateFrom,
+                dateTo
+              );
+          } catch (error) {
+            fail(error);
+            return;
+          }
+
+          if (!initialResolved) {
+            initialResolved = true;
+
+            resolve({
+              data: mergedData,
+              unsubscribe: unsubscribeAll,
+              dateKeys: dateKeys.slice()
+            });
+
+            return;
+          }
+
+          if (
+            typeof onRealtimeData ===
+            'function'
+          ) {
+            onRealtimeData(
+              mergedData
+            );
+          }
+        };
+
+      dateKeys.forEach(
+        dateKey => {
+          try {
+            const ref =
+              firebase.doc(
+                firebase.db,
+                'dashboardDaily',
+                dateKey
+              );
+
+            const unsubscribe =
+              firebase.onSnapshot(
+                ref,
+                snapshot => {
+                  if (!snapshot.exists()) {
+                    const notFound =
+                      new Error(
+                        `ไม่พบ Firestore Dashboard Snapshot วันที่ ${dateKey}`
+                      );
+
+                    notFound.code =
+                      'FIRESTORE_DASHBOARD_NOT_FOUND';
+
+                    notFound.dateKey =
+                      dateKey;
+
+                    fail(notFound);
+                    return;
+                  }
+
+                  dataByDate[dateKey] =
+                    snapshot.data();
+
+                  readyDates.add(
+                    dateKey
+                  );
+
+                  emitMerged();
+                },
+                error => {
+                  fail(error);
+                }
+              );
+
+            unsubscribers.push(
+              unsubscribe
+            );
+          } catch (error) {
+            fail(error);
+          }
+        }
+      );
+    }
+  );
+}
+
+
+/**
+ * รวม Daily Snapshots หลายวันให้มี Shape เดียวกับ getAdminDashboard
+ *
+ * กฎหลัก:
+ * - ห้องไม่ซ้ำ
+ * - ใช้ผลตรวจล่าสุดของแต่ละห้องในช่วง
+ * - ปัญหา/เร่งด่วนรวมตาม DetailID
+ * - pending = ห้องที่ไม่เคยตรวจในช่วง
+ */
+function dashboardMergeDailyFirestoreData(
+  dataByDate,
+  dateFrom,
+  dateTo
+) {
+  const dateKeys =
+    Object.keys(
+      dataByDate || {}
+    ).sort();
+
+  if (!dateKeys.length) {
+    throw new Error(
+      'ไม่มี Daily Snapshot สำหรับรวม Dashboard'
+    );
+  }
+
+  const dailyData =
+    dateKeys.map(
+      dateKey => {
+        const raw =
+          dataByDate[dateKey];
+
+        if (
+          !raw ||
+          typeof raw !==
+            'object'
+        ) {
+          throw new Error(
+            `ข้อมูล Firestore วันที่ ${dateKey} ไม่สมบูรณ์`
+          );
+        }
+
+        return {
+          dateKey,
+          dash:
+            normalizeDashboardData(
+              raw
+            )
+        };
+      }
+    );
+
+  const firstDash =
+    dailyData[0].dash;
+
+  const latestDash =
+    dailyData[
+      dailyData.length - 1
+    ].dash;
+
+
+  // --------------------------------------------------
+  // รายการห้องทั้งหมด
+  // --------------------------------------------------
+
+  const allRoomsMap =
+    new Map();
+
+  dailyData.forEach(
+    ({ dash }) => {
+      const candidates =
+        (dash.lists &&
+          Array.isArray(
+            dash.lists.allRooms
+          )
+          ? dash.lists.allRooms
+          : dash.roomStatuses) ||
+        [];
+
+      candidates.forEach(
+        room => {
+          const roomId =
+            String(
+              room.RoomID || ''
+            );
+
+          if (!roomId) {
+            return;
+          }
+
+          allRoomsMap.set(
+            roomId,
+            Object.assign(
+              {},
+              allRoomsMap.get(
+                roomId
+              ) || {},
+              room
+            )
+          );
+        }
+      );
+    }
+  );
+
+
+  // --------------------------------------------------
+  // ผลตรวจล่าสุดต่อห้องตลอดทั้งช่วง
+  // --------------------------------------------------
+
+  const latestInspectionByRoom =
+    new Map();
+
+  const latestRoomStatusByRoom =
+    new Map();
+
+  dailyData.forEach(
+    ({ dateKey, dash }) => {
+      const statuses =
+        Array.isArray(
+          dash.roomStatuses
+        )
+          ? dash.roomStatuses
+          : [];
+
+      const statusByInspection =
+        new Map();
+
+      const statusByRoom =
+        new Map();
+
+      statuses.forEach(
+        status => {
+          if (
+            status.InspectionID
+          ) {
+            statusByInspection.set(
+              String(
+                status.InspectionID
+              ),
+              status
+            );
+          }
+
+          if (status.RoomID) {
+            statusByRoom.set(
+              String(
+                status.RoomID
+              ),
+              status
+            );
+          }
+        }
+      );
+
+      const inspected =
+        dash.lists &&
+        Array.isArray(
+          dash.lists.inspectedRooms
+        )
+          ? dash.lists.inspectedRooms
+          : [];
+
+      inspected.forEach(
+        inspection => {
+          const roomId =
+            String(
+              inspection.RoomID || ''
+            );
+
+          if (!roomId) {
+            return;
+          }
+
+          const current =
+            latestInspectionByRoom.get(
+              roomId
+            );
+
+          const candidateTime =
+            dashboardInspectionTimeMs(
+              inspection,
+              dateKey
+            );
+
+          const currentTime =
+            current
+              ? dashboardInspectionTimeMs(
+                  current.inspection,
+                  current.dateKey
+                )
+              : -1;
+
+          if (
+            !current ||
+            candidateTime >=
+              currentTime
+          ) {
+            const roomStatus =
+              statusByInspection.get(
+                String(
+                  inspection.InspectionID ||
+                  ''
+                )
+              ) ||
+              statusByRoom.get(
+                roomId
+              ) ||
+              null;
+
+            latestInspectionByRoom.set(
+              roomId,
+              {
+                inspection:
+                  Object.assign(
+                    {},
+                    inspection
+                  ),
+                dateKey,
+                roomStatus
+              }
+            );
+
+            if (roomStatus) {
+              latestRoomStatusByRoom.set(
+                roomId,
+                Object.assign(
+                  {},
+                  roomStatus
+                )
+              );
+            }
+          }
+        }
+      );
+    }
+  );
+
+
+  const inspectedRooms =
+    Array.from(
+      latestInspectionByRoom.values()
+    )
+      .map(
+        item =>
+          Object.assign(
+            {},
+            item.inspection
+          )
+      )
+      .sort(
+        dashboardRoomSortClient
+      );
+
+
+  // --------------------------------------------------
+  // ผ่าน / ไม่ผ่าน
+  // --------------------------------------------------
+
+  const passedRooms =
+    inspectedRooms.filter(
+      dashboardInspectionIsPass
+    );
+
+  const failedRooms =
+    inspectedRooms.filter(
+      dashboardInspectionIsFail
+    );
+
+
+  // --------------------------------------------------
+  // ปัญหารอแก้ไข / เร่งด่วน
+  // --------------------------------------------------
+
+  const openIssueMap =
+    new Map();
+
+  const urgentIssueMap =
+    new Map();
+
+  dailyData.forEach(
+    ({ dash }) => {
+      const openIssues =
+        dash.lists &&
+        Array.isArray(
+          dash.lists.openIssues
+        )
+          ? dash.lists.openIssues
+          : [];
+
+      openIssues.forEach(
+        issue => {
+          const key =
+            String(
+              issue.DetailID ||
+              `${issue.InspectionID || ''}:${issue.ItemName || ''}`
+            );
+
+          openIssueMap.set(
+            key,
+            Object.assign(
+              {},
+              issue
+            )
+          );
+        }
+      );
+
+      const urgentIssues =
+        dash.lists &&
+        Array.isArray(
+          dash.lists.urgentIssues
+        )
+          ? dash.lists.urgentIssues
+          : [];
+
+      urgentIssues.forEach(
+        issue => {
+          const key =
+            String(
+              issue.DetailID ||
+              `${issue.InspectionID || ''}:${issue.ItemName || ''}`
+            );
+
+          urgentIssueMap.set(
+            key,
+            Object.assign(
+              {},
+              issue
+            )
+          );
+        }
+      );
+    }
+  );
+
+  const openIssues =
+    Array.from(
+      openIssueMap.values()
+    ).sort(
+      dashboardIssueSortClient
+    );
+
+  const urgentIssues =
+    Array.from(
+      urgentIssueMap.values()
+    ).sort(
+      dashboardIssueSortClient
+    );
+
+
+  // --------------------------------------------------
+  // Pending Rooms
+  // ใช้ข้อมูล LastInspection ก่อนช่วงจาก Snapshot วันแรก
+  // --------------------------------------------------
+
+  const firstPendingMap =
+    new Map();
+
+  (
+    firstDash.lists &&
+    Array.isArray(
+      firstDash.lists.pendingRooms
+    )
+      ? firstDash.lists.pendingRooms
+      : []
+  ).forEach(
+    room => {
+      if (room.RoomID) {
+        firstPendingMap.set(
+          String(room.RoomID),
+          room
+        );
       }
     }
+  );
+
+  const pendingRooms =
+    Array.from(
+      allRoomsMap.entries()
+    )
+      .filter(
+        ([roomId]) =>
+          !latestInspectionByRoom.has(
+            roomId
+          )
+      )
+      .map(
+        ([roomId, room]) => {
+          const previous =
+            firstPendingMap.get(
+              roomId
+            );
+
+          return Object.assign(
+            {
+              RoomID:
+                room.RoomID,
+              RoomNumber:
+                room.RoomNumber,
+              RoomName:
+                room.RoomName,
+              RoomType:
+                room.RoomType,
+              AssignedHousekeeper:
+                room.AssignedHousekeeper ||
+                '',
+              CurrentStatus:
+                'รอตรวจ',
+              LastInspectionID:
+                '',
+              LastInspectionDate:
+                '',
+              LastInspectorName:
+                '',
+              LastScore:
+                null,
+              LastStatus:
+                ''
+            },
+            previous || {}
+          );
+        }
+      )
+      .sort(
+        dashboardRoomSortClient
+      );
+
+
+  // --------------------------------------------------
+  // Room Status ของช่วงวันที่
+  // --------------------------------------------------
+
+  const roomStatuses =
+    Array.from(
+      allRoomsMap.entries()
+    )
+      .map(
+        ([roomId, room]) => {
+          if (
+            latestInspectionByRoom.has(
+              roomId
+            )
+          ) {
+            const latest =
+              latestInspectionByRoom.get(
+                roomId
+              );
+
+            if (
+              latest.roomStatus
+            ) {
+              return Object.assign(
+                {},
+                latest.roomStatus
+              );
+            }
+
+            return dashboardStatusFromInspection(
+              latest.inspection,
+              room
+            );
+          }
+
+          return {
+            RoomID:
+              room.RoomID,
+            RoomNumber:
+              room.RoomNumber,
+            RoomName:
+              room.RoomName,
+            RoomType:
+              room.RoomType,
+            StatusCode:
+              'PENDING',
+            StatusLabel:
+              'รอตรวจ',
+            FinalScore:
+              null,
+            HousekeeperName:
+              '',
+            InspectorName:
+              '',
+            InspectionDate:
+              '',
+            StartTime:
+              '',
+            EndTime:
+              '',
+            InspectionID:
+              ''
+          };
+        }
+      )
+      .sort(
+        dashboardRoomSortClient
+      );
+
+
+  // --------------------------------------------------
+  // KPI / Progress
+  // --------------------------------------------------
+
+  const totalRooms =
+    allRoomsMap.size ||
+    Number(
+      latestDash.kpi.totalRooms
+    ) ||
+    0;
+
+  const inspectedCount =
+    inspectedRooms.length;
+
+  const scores =
+    inspectedRooms
+      .map(
+        item =>
+          Number(
+            item.FinalScore
+          )
+      )
+      .filter(
+        score =>
+          !isNaN(score)
+      );
+
+  const avgScore =
+    scores.length
+      ? dashboardRound2(
+          scores.reduce(
+            (sum, score) =>
+              sum + score,
+            0
+          ) / scores.length
+        )
+      : 0;
+
+  const progressPercent =
+    totalRooms
+      ? dashboardRound2(
+          (
+            inspectedCount /
+            totalRooms
+          ) * 100
+        )
+      : 0;
+
+
+  // --------------------------------------------------
+  // Category Average
+  // รวม Daily Average แบบถ่วงน้ำหนักด้วยจำนวน Inspection ของวัน
+  // --------------------------------------------------
+
+  const categoryKeys = [
+    'BEDROOM',
+    'BATHROOM',
+    'AMENITIES',
+    'SAFETY',
+    'OVERALL'
+  ];
+
+  const categoryAccumulator =
+    {};
+
+  categoryKeys.forEach(
+    key => {
+      categoryAccumulator[key] =
+        {
+          total: 0,
+          weight: 0
+        };
+    }
+  );
+
+  dailyData.forEach(
+    ({ dash }) => {
+      const dailyWeight =
+        dashboardDailyInspectionCount(
+          dash
+        );
+
+      if (!dailyWeight) {
+        return;
+      }
+
+      categoryKeys.forEach(
+        key => {
+          const value =
+            Number(
+              dash.categoryAvg &&
+              dash.categoryAvg[key]
+            );
+
+          if (!isNaN(value)) {
+            categoryAccumulator[
+              key
+            ].total +=
+              value *
+              dailyWeight;
+
+            categoryAccumulator[
+              key
+            ].weight +=
+              dailyWeight;
+          }
+        }
+      );
+    }
+  );
+
+  const categoryAvg = {};
+
+  categoryKeys.forEach(
+    key => {
+      const acc =
+        categoryAccumulator[key];
+
+      categoryAvg[key] =
+        acc.weight
+          ? dashboardRound2(
+              acc.total /
+              acc.weight
+            )
+          : 0;
+    }
+  );
+
+
+  // --------------------------------------------------
+  // Daily Trend
+  // --------------------------------------------------
+
+  const dailyTrend = [];
+
+  dailyData.forEach(
+    ({ dateKey, dash }) => {
+      const source =
+        dash.trends &&
+        Array.isArray(
+          dash.trends.daily
+        )
+          ? dash.trends.daily
+          : [];
+
+      const pass =
+        source.reduce(
+          (sum, item) =>
+            sum +
+            Number(
+              item.pass || 0
+            ),
+          0
+        );
+
+      const fail =
+        source.reduce(
+          (sum, item) =>
+            sum +
+            Number(
+              item.fail || 0
+            ),
+          0
+        );
+
+      if (
+        pass ||
+        fail
+      ) {
+        dailyTrend.push({
+          label:
+            `${dateKey.slice(8, 10)}/${dateKey.slice(5, 7)}`,
+          pass,
+          fail
+        });
+      }
+    }
+  );
+
+
+  // --------------------------------------------------
+  // Top Problem Rooms / Failed Items
+  // --------------------------------------------------
+
+  const topProblemRooms =
+    dashboardMergeRankCounts(
+      dailyData.map(
+        item =>
+          item.dash.topProblemRooms
+      ),
+      'room'
+    );
+
+  const topFailedItems =
+    dashboardMergeRankCounts(
+      dailyData.map(
+        item =>
+          item.dash.topFailedItems
+      ),
+      'item'
+    );
+
+
+  // --------------------------------------------------
+  // Housekeeper Performance
+  // --------------------------------------------------
+
+  const housekeeperPerformance =
+    dashboardMergeHousekeeperPerformance(
+      dailyData.map(
+        item =>
+          item.dash.housekeeperPerformance
+      )
+    );
+
+
+  // --------------------------------------------------
+  // Resolution Hours
+  // Daily Snapshot ไม่มีจำนวน resolved item
+  // จึงใช้ค่าเฉลี่ยของวันที่มีข้อมูล
+  // --------------------------------------------------
+
+  const resolutionValues =
+    dailyData
+      .map(
+        item =>
+          Number(
+            item.dash.avgResolutionHours
+          )
+      )
+      .filter(
+        value =>
+          !isNaN(value) &&
+          value > 0
+      );
+
+  const avgResolutionHours =
+    resolutionValues.length
+      ? dashboardRound2(
+          resolutionValues.reduce(
+            (sum, value) =>
+              sum + value,
+            0
+          ) /
+          resolutionValues.length
+        )
+      : 0;
+
+
+  // --------------------------------------------------
+  // Meta
+  // --------------------------------------------------
+
+  const generatedAt =
+    dailyData.reduce(
+      (latest, item) => {
+        const value =
+          String(
+            item.dash.meta &&
+            item.dash.meta.generatedAt ||
+            ''
+          );
+
+        return value > latest
+          ? value
+          : latest;
+      },
+      ''
+    );
+
+
+  return {
+    meta: {
+      dateFrom,
+      dateTo,
+      isToday:
+        dateFrom ===
+          Utils.todayISO() &&
+        dateTo ===
+          Utils.todayISO(),
+      generatedAt:
+        generatedAt ||
+        (
+          latestDash.meta &&
+          latestDash.meta.generatedAt
+        ) ||
+        '',
+      timezone:
+        latestDash.meta.timezone ||
+        'Asia/Bangkok',
+      apiVersion:
+        latestDash.meta.apiVersion ||
+        '',
+      fastPath:
+        dateFrom === dateTo,
+      cacheHit:
+        false,
+      firestoreRange:
+        true,
+      firestoreDocuments:
+        dateKeys.length
+    },
+
+    kpi: {
+      totalRooms,
+      inspectedToday:
+        inspectedCount,
+      notInspectedToday:
+        Math.max(
+          totalRooms -
+          inspectedCount,
+          0
+        ),
+      passCount:
+        passedRooms.length,
+      failCount:
+        failedRooms.length,
+      pendingIssues:
+        openIssues.length,
+      urgentIssues:
+        urgentIssues.length,
+      avgScoreToday:
+        avgScore
+    },
+
+    progress: {
+      inspected:
+        inspectedCount,
+      total:
+        totalRooms,
+      percent:
+        progressPercent
+    },
+
+    lists: {
+      allRooms:
+        roomStatuses,
+      inspectedRooms,
+      pendingRooms,
+      passedRooms,
+      failedRooms,
+      openIssues,
+      urgentIssues
+    },
+
+    roomStatuses,
+
+    filterOptions:
+      latestDash.filterOptions ||
+      firstDash.filterOptions ||
+      {
+        housekeepers: [],
+        inspectors: [],
+        rooms: [],
+        statuses: []
+      },
+
+    categoryAvg,
+
+    trends: {
+      daily:
+        dailyTrend,
+      weekly:
+        (
+          latestDash.trends &&
+          Array.isArray(
+            latestDash.trends.weekly
+          )
+        )
+          ? latestDash.trends.weekly
+          : [],
+      monthly:
+        (
+          latestDash.trends &&
+          Array.isArray(
+            latestDash.trends.monthly
+          )
+        )
+          ? latestDash.trends.monthly
+          : []
+    },
+
+    topProblemRooms,
+    topFailedItems,
+    housekeeperPerformance,
+    avgResolutionHours
+  };
+}
+
+
+/**
+ * เวลา Inspection สำหรับเลือกผลล่าสุดข้ามหลายวัน
+ */
+function dashboardInspectionTimeMs(
+  inspection,
+  fallbackDateKey
+) {
+  const dateKey =
+    String(
+      inspection &&
+      inspection.InspectionDate ||
+      fallbackDateKey ||
+      ''
+    ).slice(0, 10);
+
+  const timeMatch =
+    String(
+      inspection &&
+      (
+        inspection.EndTime ||
+        inspection.StartTime
+      ) ||
+      '00:00'
+    ).match(
+      /(\d{1,2}):(\d{2})/
+    );
+
+  const timeText =
+    timeMatch
+      ? `${String(timeMatch[1]).padStart(2, '0')}:${timeMatch[2]}`
+      : '00:00';
+
+  const time =
+    new Date(
+      `${dateKey}T${timeText}:00+07:00`
+    ).getTime();
+
+  return isNaN(time)
+    ? 0
+    : time;
+}
+
+
+/**
+ * Logic ผ่าน/ไม่ผ่านให้ตรงกับ StatusFix ฝั่ง Apps Script
+ */
+function dashboardInspectionIsPass(item) {
+  const currentStatus =
+    String(
+      item &&
+      item.CurrentStatus ||
+      ''
+    );
+
+  if (
+    currentStatus === 'ไม่ผ่าน' ||
+    currentStatus === 'รอแก้ไข' ||
+    currentStatus === 'เร่งด่วน'
+  ) {
+    return false;
+  }
+
+  const failedCount =
+    Number(
+      item &&
+      item.FailedItemCount ||
+      0
+    );
+
+  const needsFixCount =
+    Number(
+      item &&
+      item.NeedsFixItemCount ||
+      0
+    );
+
+  if (
+    failedCount > 0 ||
+    needsFixCount > 0
+  ) {
+    return false;
+  }
+
+  return [
+    'ผ่านมาตรฐาน',
+    'ดีเยี่ยม'
+  ].includes(
+    String(
+      item &&
+      item.FinalStatus ||
+      ''
+    )
+  );
+}
+
+
+function dashboardInspectionIsFail(item) {
+  const currentStatus =
+    String(
+      item &&
+      item.CurrentStatus ||
+      ''
+    );
+
+  if (
+    currentStatus === 'รอแก้ไข'
+  ) {
+    return false;
+  }
+
+  if (
+    currentStatus === 'ไม่ผ่าน'
+  ) {
+    return true;
+  }
+
+  if (
+    Number(
+      item &&
+      item.FailedItemCount ||
+      0
+    ) > 0
+  ) {
+    return true;
+  }
+
+  return (
+    String(
+      item &&
+      item.FinalStatus ||
+      ''
+    ) === 'ไม่ผ่านมาตรฐาน' &&
+    Number(
+      item &&
+      item.NeedsFixItemCount ||
+      0
+    ) === 0
+  );
+}
+
+
+/**
+ * สร้าง Room Status กรณี Snapshot รุ่นเก่าไม่มี roomStatus ที่ตรง Inspection
+ */
+function dashboardStatusFromInspection(
+  inspection,
+  room
+) {
+  let statusCode =
+    'FAIL';
+
+  let statusLabel =
+    'ไม่ผ่าน';
+
+  if (
+    String(
+      inspection.CurrentStatus ||
+      ''
+    ) === 'รอแก้ไข' ||
+    Number(
+      inspection.NeedsFixItemCount ||
+      0
+    ) > 0
+  ) {
+    statusCode =
+      'NEEDS_FIX';
+
+    statusLabel =
+      'รอแก้ไข';
+  } else if (
+    dashboardInspectionIsPass(
+      inspection
+    )
+  ) {
+    statusCode =
+      'PASS';
+
+    statusLabel =
+      'ผ่าน';
+  }
+
+  if (
+    dashboardUrgent(
+      inspection.MaxSeverity
+    )
+  ) {
+    statusCode =
+      'URGENT';
+
+    statusLabel =
+      'เร่งด่วน';
+  }
+
+  return {
+    RoomID:
+      inspection.RoomID ||
+      room.RoomID ||
+      '',
+    RoomNumber:
+      inspection.RoomNumber ||
+      room.RoomNumber ||
+      '',
+    RoomName:
+      inspection.RoomName ||
+      room.RoomName ||
+      '',
+    RoomType:
+      inspection.RoomType ||
+      room.RoomType ||
+      '',
+    StatusCode:
+      statusCode,
+    StatusLabel:
+      statusLabel,
+    FinalScore:
+      Number(
+        inspection.FinalScore
+      ) || 0,
+    HousekeeperName:
+      inspection.HousekeeperName ||
+      '',
+    InspectorName:
+      inspection.InspectorName ||
+      '',
+    InspectionDate:
+      inspection.InspectionDate ||
+      '',
+    StartTime:
+      inspection.StartTime ||
+      '',
+    EndTime:
+      inspection.EndTime ||
+      '',
+    InspectionID:
+      inspection.InspectionID ||
+      ''
+  };
+}
+
+
+/**
+ * จำนวน Inspection ของวันจาก Daily Trend
+ * ใช้เป็น Weight รวม Category Average
+ */
+function dashboardDailyInspectionCount(dash) {
+  const daily =
+    dash &&
+    dash.trends &&
+    Array.isArray(
+      dash.trends.daily
+    )
+      ? dash.trends.daily
+      : [];
+
+  const count =
+    daily.reduce(
+      (sum, item) =>
+        sum +
+        Number(item.pass || 0) +
+        Number(item.fail || 0),
+      0
+    );
+
+  if (count) {
+    return count;
+  }
+
+  return (
+    dash &&
+    dash.lists &&
+    Array.isArray(
+      dash.lists.inspectedRooms
+    )
+  )
+    ? dash.lists.inspectedRooms.length
+    : 0;
+}
+
+
+function dashboardMergeRankCounts(
+  groups,
+  keyField
+) {
+  const counts =
+    new Map();
+
+  (groups || []).forEach(
+    group => {
+      if (!Array.isArray(group)) {
+        return;
+      }
+
+      group.forEach(
+        item => {
+          const key =
+            String(
+              item &&
+              item[keyField] ||
+              ''
+            );
+
+          if (!key) {
+            return;
+          }
+
+          counts.set(
+            key,
+            (
+              counts.get(key) ||
+              0
+            ) +
+            Number(
+              item.count || 0
+            )
+          );
+        }
+      );
+    }
+  );
+
+  return Array.from(
+    counts.entries()
+  )
+    .map(
+      ([key, count]) => ({
+        [keyField]: key,
+        count
+      })
+    )
+    .sort(
+      (a, b) =>
+        b.count - a.count
+    )
+    .slice(0, 10);
+}
+
+
+function dashboardMergeHousekeeperPerformance(
+  groups
+) {
+  const stats =
+    new Map();
+
+  (groups || []).forEach(
+    group => {
+      if (!Array.isArray(group)) {
+        return;
+      }
+
+      group.forEach(
+        item => {
+          const name =
+            String(
+              item &&
+              item.name ||
+              ''
+            ).trim();
+
+          if (!name) {
+            return;
+          }
+
+          const taskCount =
+            Number(
+              item.taskCount || 0
+            );
+
+          const avgScore =
+            Number(
+              item.avgScore || 0
+            );
+
+          const current =
+            stats.get(name) ||
+            {
+              taskCount: 0,
+              weightedScore: 0
+            };
+
+          current.taskCount +=
+            taskCount;
+
+          current.weightedScore +=
+            avgScore *
+            taskCount;
+
+          stats.set(
+            name,
+            current
+          );
+        }
+      );
+    }
+  );
+
+  return Array.from(
+    stats.entries()
+  )
+    .map(
+      ([name, value]) => ({
+        name,
+        taskCount:
+          value.taskCount,
+        avgScore:
+          value.taskCount
+            ? dashboardRound2(
+                value.weightedScore /
+                value.taskCount
+              )
+            : 0
+      })
+    )
+    .sort(
+      (a, b) =>
+        b.taskCount -
+        a.taskCount
+    );
+}
+
+
+function dashboardRoomSortClient(a, b) {
+  const av =
+    String(
+      a.RoomNumber ||
+      a.RoomName ||
+      ''
+    );
+
+  const bv =
+    String(
+      b.RoomNumber ||
+      b.RoomName ||
+      ''
+    );
+
+  const aVip =
+    /VIP/i.test(av) ||
+    /VIP/i.test(
+      String(
+        a.RoomName || ''
+      )
+    );
+
+  const bVip =
+    /VIP/i.test(bv) ||
+    /VIP/i.test(
+      String(
+        b.RoomName || ''
+      )
+    );
+
+  if (
+    aVip !== bVip
+  ) {
+    return aVip
+      ? 1
+      : -1;
+  }
+
+  const an =
+    Number(
+      av.replace(
+        /\D/g,
+        ''
+      )
+    );
+
+  const bn =
+    Number(
+      bv.replace(
+        /\D/g,
+        ''
+      )
+    );
+
+  return (
+    (
+      isNaN(an)
+        ? 9999
+        : an
+    ) -
+    (
+      isNaN(bn)
+        ? 9999
+        : bn
+    )
+  ) ||
+    av.localeCompare(
+      bv
+    );
+}
+
+
+function dashboardIssueSortClient(a, b) {
+  const au =
+    dashboardUrgent(
+      a && a.Severity
+    )
+      ? 1
+      : 0;
+
+  const bu =
+    dashboardUrgent(
+      b && b.Severity
+    )
+      ? 1
+      : 0;
+
+  if (au !== bu) {
+    return bu - au;
+  }
+
+  return (
+    Number(
+      b && b.AgeHours ||
+      0
+    ) -
+    Number(
+      a && a.AgeHours ||
+      0
+    )
+  );
+}
+
+
+function dashboardRound2(value) {
+  return (
+    Math.round(
+      (
+        Number(value) ||
+        0
+      ) * 100
+    ) / 100
   );
 }
 
@@ -887,7 +2567,7 @@ async function openDashboardIssueEditor(detailId) {
         await Api.withSubmitLock(() => Api.call('updateIssueDetails', payload, { silent: true, timeoutMs: APP_CONFIG.SAVE_REQUEST_TIMEOUT_MS || 120000 }));
         Utils.toast('success', 'บันทึกข้อมูลสำเร็จ');
         dashboardCloseModal();
-        await DashboardView.loadAdminDashboard(false, true);
+        await DashboardView.loadAdminDashboard(false);
       } catch (error) {
         Utils.toast('error', error.message === 'TIMEOUT' ? 'ระบบยังไม่ยืนยันการบันทึก กรุณาตรวจสอบข้อมูลก่อนลองอีกครั้ง' : (error.message || 'บันทึกข้อมูลไม่สำเร็จ'));
         saveButton.disabled = false;
