@@ -230,11 +230,11 @@ const InspectionView = {
         <div class="hci-page-header"><div><h1>ประวัติการตรวจสอบ</h1></div></div>
         <div class="hci-card">
           <table class="hci-table">
-            <thead><tr><th>เลขที่</th><th>ห้อง</th><th>ผู้ตรวจสอบ</th><th>แม่บ้าน</th><th>วันที่</th><th>คะแนน</th><th>สถานะ</th><th>การอนุมัติ</th><th></th></tr></thead>
+            <thead><tr><th>เลขที่</th><th>ห้อง</th><th>ผู้ตรวจสอบ</th><th>พนักงาน/แม่บ้าน</th><th>วันที่ / เวลา</th><th>คะแนน</th><th>สถานะ</th><th>การอนุมัติ</th><th></th></tr></thead>
             <tbody>${history.items.map(i => `
               <tr>
                 <td>${i.InspectionID}</td><td>${Utils.escapeHtml(i.RoomNumber)}</td><td>${Utils.escapeHtml(i.InspectorName)}</td>
-                <td>${Utils.escapeHtml(i.HousekeeperName || '-')}</td><td>${i.InspectionDate}</td><td>${i.FinalScore}%</td>
+                <td>${Utils.escapeHtml(i.HousekeeperName || '-')}</td><td>${inspectionHistoryDateTime(i)}</td><td>${i.FinalScore}%</td>
                 <td><span class="hci-badge hci-badge-${Utils.statusMeta(i.FinalStatus).color}">${i.FinalStatus}</span></td>
                 <td>${approvalLabel(i.ApprovalStatus)}</td>
                 <td><button class="hci-btn-icon" onclick="location.hash='#/inspection-detail/${i.InspectionID}'"><i class="fa-solid fa-eye"></i></button></td>
@@ -270,7 +270,7 @@ const InspectionView = {
             <p><b>ห้อง/บ้านพัก:</b> ${Utils.escapeHtml(ins.RoomNumber)}</p>
             <p><b>ผู้ตรวจสอบ:</b> ${Utils.escapeHtml(ins.InspectorName)}</p>
             <p><b>พนักงานแม่บ้านผู้รับผิดชอบ:</b> ${Utils.escapeHtml(ins.HousekeeperName || '-')}</p>
-            <p><b>วันที่ตรวจสอบ:</b> ${ins.InspectionDate} ${ins.StartTime}-${ins.EndTime}</p>
+            <p><b>วันที่ตรวจสอบ:</b> ${inspectionHistoryDateTime(ins, true)}</p>
             <p><b>คะแนนรวม:</b> ${ins.FinalScore}% (${ins.FinalStatus})</p>
             <p><b>สถานะการอนุมัติ:</b> ${approvalLabel(ins.ApprovalStatus)}</p>
           </div>
@@ -589,6 +589,29 @@ function renderFailedList(details) {
   const failed = details.filter(d => d.result === 'ไม่ผ่าน' || d.result === 'ต้องแก้ไข');
   if (!failed.length) return emptyState('ไม่พบรายการที่ไม่ผ่าน');
   return `<ul class="hci-fail-list">${failed.map(d => `<li><span class="hci-badge hci-badge-${d.severity === 'เร่งด่วน' ? 'red' : 'amber'}">${d.severity || '-'}</span> ${Utils.escapeHtml(d.itemName)} — ${Utils.escapeHtml(d.note)}</li>`).join('')}</ul>`;
+}
+
+function inspectionHistoryDateTime(item, showRange = false) {
+  const rawDate = String((item && item.InspectionDate) || '').trim();
+  let dateText = rawDate || '-';
+  const dateMatch = rawDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dateMatch) dateText = `${dateMatch[3]}/${dateMatch[2]}/${dateMatch[1]}`;
+
+  const start = String((item && item.StartTime) || '').trim();
+  const end = String((item && item.EndTime) || '').trim();
+
+  let timeText = '';
+  if (showRange && start && end) timeText = `${start} – ${end}`;
+  else timeText = end || start;
+
+  // CreatedAt เป็น fallback สำหรับข้อมูลเก่าที่อาจยังไม่มี StartTime/EndTime
+  if (!timeText && item && item.CreatedAt) {
+    const created = String(item.CreatedAt).trim();
+    const createdTime = created.match(/(\d{1,2}:\d{2})/);
+    if (createdTime) timeText = createdTime[1];
+  }
+
+  return Utils.escapeHtml(`${dateText}${timeText ? ' ' + timeText : ''}`);
 }
 
 function approvalLabel(status) {
