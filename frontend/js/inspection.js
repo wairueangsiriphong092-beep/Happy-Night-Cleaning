@@ -69,16 +69,24 @@ const InspectionView = {
         <form id="inspectionForm" class="hci-card">
           <div class="hci-form-row">
             <div class="hci-form-group"><label>รอบการตรวจ</label>
-              <select name="round"><option>รอบเช้า</option><option>รอบบ่าย</option><option>รอบเย็น</option><option>ตรวจซ้ำ</option></select>
+              <select name="round"><option>รอบเช้า</option><option>รอบบ่าย</option><option>รอบดึก</option><option>ตรวจซ้ำ</option></select>
             </div>
             <div class="hci-form-group"><label>สถานะห้องก่อนตรวจ</label>
               <select name="preStatus"><option>กำลังทำความสะอาด</option><option>ทำความสะอาดเสร็จแล้ว</option><option>รอตรวจซ้ำหลังแก้ไข</option></select>
             </div>
             <div class="hci-form-group"><label>พนักงานแม่บ้านผู้รับผิดชอบ</label>
-              <select name="housekeeperId" required>
-                ${user.Role === 'HOUSEKEEPER' ? '' : '<option value="">-- เลือกพนักงาน --</option>'}
-                ${users.items.map(h => `<option value="${h.UserID}" data-name="${Utils.escapeHtml(h.FullName)}" ${h.UserID === user.UserID ? 'selected' : ''}>${Utils.escapeHtml(h.FullName)}</option>`).join('')}
-              </select>
+              <input
+                type="text"
+                name="housekeeperName"
+                list="housekeeperNameList"
+                required
+                autocomplete="off"
+                maxlength="200"
+                placeholder="พิมพ์ชื่อพนักงานแม่บ้าน"
+                value="${user.Role === 'HOUSEKEEPER' ? Utils.escapeHtml(user.FullName || '') : ''}">
+              <datalist id="housekeeperNameList">
+                ${(users.items || []).map(h => `<option value="${Utils.escapeHtml(h.FullName || '')}" data-user-id="${Utils.escapeHtml(h.UserID || '')}"></option>`).join('')}
+              </datalist>
             </div>
           </div>
 
@@ -133,8 +141,8 @@ const InspectionView = {
           Utils.toast('warning', 'กรุณาแนบรูปภาพหลักฐานสำหรับรายการที่ไม่ผ่าน: ' + missingPhoto.itemName);
           return;
         }
-        if (!data.housekeeperId) {
-          Utils.toast('warning', 'กรุณาเลือกพนักงานแม่บ้านผู้รับผิดชอบ');
+        if (!data.housekeeperName) {
+          Utils.toast('warning', 'กรุณาพิมพ์ชื่อพนักงานแม่บ้านผู้รับผิดชอบ');
           return;
         }
         Utils.showLoading('กำลังอัปโหลดรูปภาพหลักฐาน...');
@@ -261,7 +269,7 @@ const InspectionView = {
           <div class="hci-detail-grid">
             <p><b>ห้อง/บ้านพัก:</b> ${Utils.escapeHtml(ins.RoomNumber)}</p>
             <p><b>ผู้ตรวจสอบ:</b> ${Utils.escapeHtml(ins.InspectorName)}</p>
-            <p><b>แม่บ้านผู้รับผิดชอบ:</b> ${Utils.escapeHtml(ins.HousekeeperName || '-')}</p>
+            <p><b>พนักงานแม่บ้านผู้รับผิดชอบ:</b> ${Utils.escapeHtml(ins.HousekeeperName || '-')}</p>
             <p><b>วันที่ตรวจสอบ:</b> ${ins.InspectionDate} ${ins.StartTime}-${ins.EndTime}</p>
             <p><b>คะแนนรวม:</b> ${ins.FinalScore}% (${ins.FinalStatus})</p>
             <p><b>สถานะการอนุมัติ:</b> ${approvalLabel(ins.ApprovalStatus)}</p>
@@ -490,13 +498,23 @@ function openFirstIncompleteZone(catContainer) {
 function restoreDraftValues() { /* placeholder เผื่อขยายในอนาคต (การกู้คืนค่า checklist แบบเต็มรูปแบบ) */ }
 function restoreFormFields(form, draft) {
   if (draft.round) form.round.value = draft.round;
+  if (draft.preStatus) form.preStatus.value = draft.preStatus;
+  if (draft.housekeeperName && form.housekeeperName) form.housekeeperName.value = draft.housekeeperName;
   if (draft.generalNote) form.generalNote.value = draft.generalNote;
 }
 
 function collectFormData(form, catContainer) {
   const fd = new FormData(form);
-  const housekeeperSelect = form.querySelector('[name=housekeeperId]');
-  const housekeeperName = housekeeperSelect.selectedOptions[0] ? housekeeperSelect.selectedOptions[0].dataset.name : '';
+  const housekeeperName = String(fd.get('housekeeperName') || '').trim();
+  const housekeeperList = form.querySelector('#housekeeperNameList');
+  const matchedHousekeeper = housekeeperList
+    ? Array.from(housekeeperList.options).find(option =>
+        String(option.value || '').trim().toLocaleLowerCase() === housekeeperName.toLocaleLowerCase()
+      )
+    : null;
+  // เก็บ UserID เดิมไว้แบบเงียบ ๆ เมื่อชื่อที่พิมพ์ตรงกับพนักงานในระบบ
+  // เพื่อไม่กระทบ Dashboard / ตัวกรอง / รายการงานของแม่บ้านเดิม
+  const housekeeperId = matchedHousekeeper ? (matchedHousekeeper.dataset.userId || '') : '';
   const details = [];
   catContainer.querySelectorAll('.hci-checklist-item').forEach(itemEl => {
     const result = itemEl.querySelector('.hci-result-select').value;
@@ -516,7 +534,7 @@ function collectFormData(form, catContainer) {
   });
   return {
     round: fd.get('round'), preStatus: fd.get('preStatus'),
-    housekeeperId: fd.get('housekeeperId'), housekeeperName,
+    housekeeperId, housekeeperName,
     generalNote: fd.get('generalNote'), startTime: Utilities_currentTime(), details
   };
 }
