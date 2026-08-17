@@ -199,6 +199,7 @@ const InspectionView = {
           const result = await Api.call('saveInspection', {
             roomId: room.RoomID, roomNumber: room.RoomNumber || room.RoomName,
             housekeeperId: data.housekeeperId, housekeeperName: data.housekeeperName,
+            inspectionRound: data.round,
             inspectionDate: Utils.todayISO(), startTime: data.startTime,
             generalNote: data.generalNote, details: data.details
           });
@@ -230,15 +231,16 @@ const InspectionView = {
         <div class="hci-page-header"><div><h1>ประวัติการตรวจสอบ</h1></div></div>
         <div class="hci-card">
           <table class="hci-table">
-            <thead><tr><th>เลขที่</th><th>ห้อง</th><th>ผู้ตรวจสอบ</th><th>พนักงาน/แม่บ้าน</th><th>วันที่ / เวลา</th><th>คะแนน</th><th>สถานะ</th><th>การอนุมัติ</th><th></th></tr></thead>
+            <thead><tr><th>เลขที่</th><th>ห้อง</th><th>ผู้ตรวจสอบ</th><th>พนักงาน/แม่บ้าน</th><th>วันที่ / เวลา</th><th>รอบการตรวจ</th><th>คะแนน</th><th>สถานะ</th><th>การอนุมัติ</th><th></th></tr></thead>
             <tbody>${history.items.map(i => `
               <tr>
                 <td>${i.InspectionID}</td><td>${Utils.escapeHtml(i.RoomNumber)}</td><td>${Utils.escapeHtml(i.InspectorName)}</td>
-                <td>${Utils.escapeHtml(i.HousekeeperName || '-')}</td><td>${inspectionHistoryDateTime(i)}</td><td>${i.FinalScore}%</td>
+                <td>${Utils.escapeHtml(i.HousekeeperName || '-')}</td><td>${inspectionHistoryDateTime(i)}</td>
+                <td>${Utils.escapeHtml(i.InspectionRound || '-')}</td><td>${i.FinalScore}%</td>
                 <td><span class="hci-badge hci-badge-${Utils.statusMeta(i.FinalStatus).color}">${i.FinalStatus}</span></td>
                 <td>${approvalLabel(i.ApprovalStatus)}</td>
                 <td><button class="hci-btn-icon" onclick="location.hash='#/inspection-detail/${i.InspectionID}'"><i class="fa-solid fa-eye"></i></button></td>
-              </tr>`).join('') || emptyRow(9)}
+              </tr>`).join('') || emptyRow(10)}
             </tbody>
           </table>
         </div>
@@ -271,6 +273,7 @@ const InspectionView = {
             <p><b>ผู้ตรวจสอบ:</b> ${Utils.escapeHtml(ins.InspectorName)}</p>
             <p><b>พนักงานแม่บ้านผู้รับผิดชอบ:</b> ${Utils.escapeHtml(ins.HousekeeperName || '-')}</p>
             <p><b>วันที่ตรวจสอบ:</b> ${inspectionHistoryDateTime(ins, true)}</p>
+            <p><b>รอบการตรวจ:</b> ${Utils.escapeHtml(ins.InspectionRound || '-')}</p>
             <p><b>คะแนนรวม:</b> ${ins.FinalScore}% (${ins.FinalStatus})</p>
             <p><b>สถานะการอนุมัติ:</b> ${approvalLabel(ins.ApprovalStatus)}</p>
           </div>
