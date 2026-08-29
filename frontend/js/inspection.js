@@ -131,12 +131,12 @@ const InspectionView = {
           Utils.toast('warning', 'กรุณาประเมินผลให้ครบทุกรายการก่อนตรวจทาน');
           return;
         }
-        const missingNote = data.details.find(d => (d.result === 'ไม่ผ่าน' || d.result === 'ต้องแก้ไข') && !d.note);
+        const missingNote = data.details.find(d => d.result === 'ไม่ผ่าน' && !d.note);
         if (missingNote) {
           Utils.toast('warning', 'รายการที่ไม่ผ่าน ต้องระบุหมายเหตุ: ' + missingNote.itemName);
           return;
         }
-        const missingPhoto = data.details.find(d => (d.result === 'ไม่ผ่าน' || d.result === 'ต้องแก้ไข') && !d.beforeImageUrl && !d._pendingBase64);
+        const missingPhoto = data.details.find(d => d.result === 'ไม่ผ่าน' && !d.beforeImageUrl && !d._pendingBase64);
         if (missingPhoto) {
           Utils.toast('warning', 'กรุณาแนบรูปภาพหลักฐานสำหรับรายการที่ไม่ผ่าน: ' + missingPhoto.itemName);
           return;
@@ -171,14 +171,14 @@ const InspectionView = {
           <div class="hci-score-circle" style="--score:${score.finalScore}"><span>${score.finalScore}%</span></div>
           <div>
             <p class="hci-score-status hci-color-${score.finalScore >= 80 ? 'green' : (score.finalScore >= 70 ? 'amber' : 'red')}">${score.finalStatus}</p>
-            <p class="hci-muted">คะแนนคำนวณจากรายการที่ประเมินได้ทั้งหมด ${data.details.filter(d => d.result !== 'ไม่เกี่ยวข้อง' && d.result !== 'ไม่สามารถตรวจสอบได้').length} รายการ</p>
+            <p class="hci-muted">คะแนนคำนวณจากรายการที่ประเมินทั้งหมด ${data.details.length} รายการ</p>
           </div>
         </div>
         <table class="hci-table">
           <thead><tr><th>หมวด</th><th>คะแนน</th></tr></thead>
           <tbody>${INSPECTION_CATEGORIES.map(k => `<tr><td>${APP_CONFIG.CATEGORY_LABELS[k]}</td><td>${score.categoryScores[k] === null ? '-' : score.categoryScores[k] + '%'}</td></tr>`).join('')}</tbody>
         </table>
-        <h3>รายการที่ไม่ผ่าน / ต้องแก้ไข</h3>
+        <h3>รายการที่ไม่ผ่าน</h3>
         ${renderFailedList(data.details)}
         <div class="hci-form-actions">
           <button class="hci-btn hci-btn-outline" id="backToFormBtn">แก้ไขแบบฟอร์ม</button>
@@ -438,7 +438,7 @@ function bindItemHandlers(catContainer) {
     const preview = itemEl.querySelector('.hci-photo-preview');
 
     resultSelect.addEventListener('change', () => {
-      const needsExtra = resultSelect.value === 'ไม่ผ่าน' || resultSelect.value === 'ต้องแก้ไข';
+      const needsExtra = resultSelect.value === 'ไม่ผ่าน';
       extra.style.display = needsExtra ? 'flex' : 'none';
       severitySelect.style.display = needsExtra ? 'inline-block' : 'none';
       itemEl.classList.toggle('hci-item-fail', needsExtra);
@@ -562,13 +562,13 @@ async function uploadPendingPhotos(details, roomNumber, inspectorName) {
 }
 
 function calcPreviewScore(details) {
-  const scoreMap = { 'ผ่าน': 5, 'ไม่ผ่าน': 1, 'ต้องแก้ไข': 2, 'ไม่เกี่ยวข้อง': null, 'ไม่สามารถตรวจสอบได้': null };
+  const scoreMap = { 'ผ่าน': 5, 'ไม่ผ่าน': 1 };
   const catTotals = { BEDROOM: [], BATHROOM: [], AMENITIES: [], SAFETY: [] };
   let urgent = false;
   details.forEach(d => {
     const s = scoreMap[d.result];
     if (s !== null && s !== undefined && catTotals[d.category]) catTotals[d.category].push(s);
-    if (d.severity === 'เร่งด่วน' && (d.result === 'ไม่ผ่าน' || d.result === 'ต้องแก้ไข')) urgent = true;
+    if (d.severity === 'เร่งด่วน' && d.result === 'ไม่ผ่าน') urgent = true;
   });
   const categoryScores = {}; const all = [];
   Object.keys(catTotals).forEach(cat => {
@@ -589,7 +589,7 @@ function calcPreviewScore(details) {
 }
 
 function renderFailedList(details) {
-  const failed = details.filter(d => d.result === 'ไม่ผ่าน' || d.result === 'ต้องแก้ไข');
+  const failed = details.filter(d => d.result === 'ไม่ผ่าน');
   if (!failed.length) return emptyState('ไม่พบรายการที่ไม่ผ่าน');
   return `<ul class="hci-fail-list">${failed.map(d => `<li><span class="hci-badge hci-badge-${d.severity === 'เร่งด่วน' ? 'red' : 'amber'}">${d.severity || '-'}</span> ${Utils.escapeHtml(d.itemName)} — ${Utils.escapeHtml(d.note)}</li>`).join('')}</ul>`;
 }
