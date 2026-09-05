@@ -934,7 +934,13 @@ function inspectionClockText() {
 
 function inspectionPropertyLabel(item) {
   if (!item) return '-';
-  if (item.RoomType === 'HOTEL_AREA') return item.RoomName || 'บริเวณโรงแรม';
+  const roomNameText = String(item.RoomName || '').trim();
+  const roomNumberText = String(item.RoomNumber || '').trim();
+  if (
+    item.RoomType === 'HOTEL_AREA' ||
+    roomNameText === 'บริเวณโรงแรม' ||
+    roomNumberText === 'บริเวณโรงแรม'
+  ) return 'บริเวณโรงแรม';
   if (item.RoomType === 'VIP' || String(item.RoomNumber || '').toUpperCase().includes('VIP')) {
     return item.RoomName || item.RoomNumber || '-';
   }

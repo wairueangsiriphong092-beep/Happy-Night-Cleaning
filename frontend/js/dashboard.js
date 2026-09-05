@@ -2618,7 +2618,13 @@ function dashboardBadge(value) {
   return `<span class="hci-badge hci-badge-${color}">${Utils.escapeHtml(text)}</span>`;
 }
 function dashboardRoomLabel(item) {
-  if (item.RoomType === 'HOTEL_AREA') return item.RoomName || 'บริเวณโรงแรม';
+  const roomNameText = String(item.RoomName || '').trim();
+  const roomNumberText = String(item.RoomNumber || '').trim();
+  if (
+    item.RoomType === 'HOTEL_AREA' ||
+    roomNameText === 'บริเวณโรงแรม' ||
+    roomNumberText === 'บริเวณโรงแรม'
+  ) return 'บริเวณโรงแรม';
   if (item.RoomType === 'VIP' || String(item.RoomNumber || '').toUpperCase().includes('VIP')) {
     return item.RoomName || item.RoomNumber || '-';
   }
@@ -2672,10 +2678,16 @@ function renderRoomGrid(el, rooms, user) {
       ? 'ยังไม่ได้ทำความสะอาด'
       : r.Status;
     const meta = Utils.statusMeta(effectiveStatus);
-    const isHotelArea = r.RoomType === 'HOTEL_AREA';
+    const roomNameText = String(r.RoomName || '').trim();
+    const roomNumberText = String(r.RoomNumber || '').trim();
+    const isHotelArea =
+      r.RoomType === 'HOTEL_AREA' ||
+      roomNameText === 'บริเวณโรงแรม' ||
+      roomNumberText === 'บริเวณโรงแรม';
+
     const cardIcon = isHotelArea ? 'fa-hotel' : meta.icon;
     const cardLabel = isHotelArea
-      ? (r.RoomName || 'บริเวณโรงแรม')
+      ? 'บริเวณโรงแรม'
       : (r.RoomType === 'VIP'
         ? (r.RoomName || r.RoomNumber)
         : 'ห้อง ' + (r.RoomNumber || '-'));
