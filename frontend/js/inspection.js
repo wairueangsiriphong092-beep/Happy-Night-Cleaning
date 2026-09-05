@@ -54,6 +54,11 @@ const InspectionView = {
         Api.call('getRooms', {}),
         housekeeperRequest
       ]);
+
+      // รองรับ Category ใน ChecklistItems แบบอังกฤษอย่างเดียว
+      // และแบบ "อังกฤษ | ภาษาไทย" โดยไม่กระทบ key ภายในระบบ
+      const checklistItems = normalizeChecklistItemsForForm(checklist.items || {});
+
       const room = rooms.items.find(r => r.RoomID === roomId);
       if (!room) { container.innerHTML = emptyState('ไม่พบห้องที่ระบุ'); Utils.hideLoading(); return; }
 
@@ -105,7 +110,7 @@ const InspectionView = {
       const catContainer = document.getElementById('checklistCategories');
       // หน้าแบบฟอร์มใช้เพียง 4 โซน และเริ่มต้นแสดงเฉพาะหัวข้อ
       catContainer.innerHTML = INSPECTION_CATEGORIES
-        .map(cat => renderCategoryBlock(cat, checklist.items[cat] || [], draft))
+        .map(cat => renderCategoryBlock(cat, checklistItems[cat] || [], draft))
         .join('');
       bindItemHandlers(catContainer);
       if (draft) restoreDraftValues(catContainer, draft);
@@ -376,6 +381,76 @@ const InspectionView = {
 };
 
 // ==================== ฟังก์ชันช่วยเหลือเฉพาะหน้าตรวจสอบ ====================
+
+/**
+ * รองรับ Category จาก Google Sheet ได้ทั้ง:
+ * BEDROOM
+ * BEDROOM | โซนห้องนอน
+ * BATHROOM | โซนห้องน้ำ
+ * AMENITIES | โซนบริเวณโรงแรม
+ * SAFETY | ภาพรวมความปลอดภัย
+ *
+ * ระบบหน้าเว็บจะ normalize กลับเป็น key เดิมเสมอ
+ */
+function normalizeInspectionCategoryKey(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const upper = text.toUpperCase();
+
+  if (upper.startsWith('BEDROOM') || text === 'โซนห้องนอน') return 'BEDROOM';
+  if (upper.startsWith('BATHROOM') || text === 'โซนห้องน้ำ') return 'BATHROOM';
+  if (
+    upper.startsWith('AMENITIES') ||
+    text === 'โซนบริเวณโรงแรม' ||
+    text === 'สิ่งอำนวยความสะดวก'
+  ) return 'AMENITIES';
+  if (upper.startsWith('SAFETY') || text === 'ภาพรวมความปลอดภัย') return 'SAFETY';
+  if (
+    upper.startsWith('OVERALL') ||
+    text === 'ภาพรวมและความพร้อมใช้งาน' ||
+    text === 'ภาพรวม'
+  ) return 'OVERALL';
+
+  return '';
+}
+
+/**
+ * แปลง checklist.items จาก API ให้ใช้ key มาตรฐาน
+ * ป้องกันหน้าเว็บขึ้น 0/0 เมื่อ Category ใน Sheet มีชื่อไทยต่อท้าย
+ */
+function normalizeChecklistItemsForForm(sourceItems) {
+  const normalized = {
+    BEDROOM: [],
+    BATHROOM: [],
+    AMENITIES: [],
+    SAFETY: [],
+    OVERALL: []
+  };
+
+  const src = sourceItems && typeof sourceItems === 'object'
+    ? sourceItems
+    : {};
+
+  Object.keys(src).forEach(rawKey => {
+    const key = normalizeInspectionCategoryKey(rawKey);
+    if (!key) return;
+
+    const list = Array.isArray(src[rawKey]) ? src[rawKey] : [];
+    list.forEach(item => {
+      const itemKey = normalizeInspectionCategoryKey(item && item.Category) || key;
+      if (!normalized[itemKey]) normalized[itemKey] = [];
+
+      normalized[itemKey].push({
+        ...item,
+        Category: itemKey
+      });
+    });
+  });
+
+  return normalized;
+}
+
 
 const INSPECTION_CATEGORIES = ['BEDROOM', 'BATHROOM', 'AMENITIES', 'SAFETY'];
 
