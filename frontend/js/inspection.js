@@ -6,6 +6,21 @@
 
 const InspectionView = {
   currentDraft: null, // ข้อมูลแบบร่างที่กำลังกรอกอยู่ (in-memory + auto-save)
+  liveRefreshTimer: null,
+  historyFilters: null,
+  issueFilters: null,
+
+  stopLiveRefresh() {
+    if (this.liveRefreshTimer) clearInterval(this.liveRefreshTimer);
+    this.liveRefreshTimer = null;
+  },
+
+  startLiveRefresh(callback) {
+    this.stopLiveRefresh();
+    this.liveRefreshTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') callback();
+    }, 20000);
+  },
 
   // ---------------- รายการห้องพัก ----------------
   async renderRoomList(container) {
@@ -131,31 +146,20 @@ const InspectionView = {
         e.preventDefault();
         const data = collectFormData(form, catContainer);
 
-        // บังคับประเมินให้ครบเฉพาะ:
-        // - โซนห้องนอน
-        // - โซนห้องน้ำ
-        // - ภาพรวมความปลอดภัย
-        //
-        // โซนบริเวณโรงแรม (AMENITIES) เป็นรายการเสริม:
-        // จะประเมินบางรายการ / ทุก
-        // รายการ / ไม่ประเมินเลยก็สามารถตรวจทานและบันทึกได้
+        // โซนห้องนอน / โซนห้องน้ำ / โซนบริเวณโรงแรม
+        // สามารถเว้นบางรายการเป็น “ยังไม่ได้ประเมิน” ได้
+        // ภาพรวมความปลอดภัยยังคงบังคับให้ประเมินครบทุกข้อ
         const requiredItems = Array.from(
           catContainer.querySelectorAll('.hci-checklist-item')
-        ).filter(item => item.dataset.category !== 'AMENITIES');
+        ).filter(item => item.dataset.category === 'SAFETY');
 
         const requiredAnswered = data.details.filter(
-          detail => detail.category !== 'AMENITIES'
+          detail => detail.category === 'SAFETY' && detail.result !== 'ยังไม่ได้ประเมิน'
         );
 
-        if (
-          requiredItems.length === 0 ||
-          requiredAnswered.length !== requiredItems.length
-        ) {
+        if (requiredItems.length > 0 && requiredAnswered.length !== requiredItems.length) {
           openFirstIncompleteZone(catContainer);
-          Utils.toast(
-            'warning',
-            'กรุณาประเมินผลให้ครบในโซนห้องนอน โซนห้องน้ำ และภาพรวมความปลอดภัยก่อนตรวจทาน'
-          );
+          Utils.toast('warning', 'กรุณาประเมินผลในภาพรวมความปลอดภัยให้ครบทุกรายการก่อนตรวจทาน');
           return;
         }
         const missingNote = data.details.find(d => d.result === 'ไม่ผ่าน' && !d.note);
@@ -191,6 +195,7 @@ const InspectionView = {
   // ---------------- หน้าสรุปก่อนส่ง ----------------
   renderReview(container, room, data, draftKey) {
     const score = calcPreviewScore(data.details);
+    const evaluatedCount = data.details.filter(d => d.result !== 'ยังไม่ได้ประเมิน').length;
     container.innerHTML = `
       <div class="hci-page-header"><div><h1>ตรวจทานผลการตรวจสอบก่อนส่ง</h1><p class="hci-subtitle">ห้อง ${Utils.escapeHtml(room.RoomNumber || room.RoomName)}</p></div></div>
       <div class="hci-card">
@@ -198,7 +203,7 @@ const InspectionView = {
           <div class="hci-score-circle" style="--score:${score.finalScore}"><span>${score.finalScore}%</span></div>
           <div>
             <p class="hci-score-status hci-color-${score.finalScore >= 80 ? 'green' : (score.finalScore >= 70 ? 'amber' : 'red')}">${score.finalStatus}</p>
-            <p class="hci-muted">คะแนนคำนวณจากรายการที่ประเมินทั้งหมด ${data.details.length} รายการ</p>
+            <p class="hci-muted">คะแนนคำนวณจากรายการที่ประเมินจริง ${evaluatedCount} รายการ</p>
           </div>
         </div>
         <table class="hci-table">
@@ -251,30 +256,86 @@ const InspectionView = {
 
   // ---------------- ประวัติการตรวจสอบ ----------------
   async renderHistory(container) {
-    Utils.showLoading('กำลังโหลดประวัติการตรวจสอบ...');
-    try {
-      const history = await Api.call('getInspectionHistory', { page: 1, pageSize: 50 });
-      container.innerHTML = `
-        <div class="hci-page-header"><div><h1>ประวัติการตรวจสอบ</h1></div></div>
-        <div class="hci-card">
+    this.stopLiveRefresh();
+    const today = Utils.todayISO();
+    this.historyFilters = { dateFrom: today, dateTo: today };
+
+    container.innerHTML = `
+      <div class="hci-page-header">
+        <div><h1>ประวัติการตรวจสอบ</h1><p class="hci-subtitle">แสดงข้อมูลแบบวันต่อวัน • ค่าเริ่มต้นคือวันนี้</p></div>
+        <div class="hci-header-actions"><span class="hci-badge hci-badge-navy" id="historyUpdatedAt">กำลังโหลดข้อมูล...</span></div>
+      </div>
+      <div class="hci-card hci-dashboard-filter-card">
+        <div class="hci-quick-filters" id="historyQuickFilters">
+          <button type="button" class="hci-quick-filter active" data-range="today">วันนี้</button>
+          <button type="button" class="hci-quick-filter" data-range="yesterday">เมื่อวาน</button>
+          <button type="button" class="hci-quick-filter" data-range="custom">กำหนดเอง</button>
+        </div>
+        <form id="historyFilterForm" class="hci-filter-bar">
+          <div class="hci-filter-group"><label>วันที่เริ่มต้น</label><input type="date" name="dateFrom" value="${today}"></div>
+          <div class="hci-filter-group"><label>วันที่สิ้นสุด</label><input type="date" name="dateTo" value="${today}"></div>
+          <button type="submit" class="hci-btn hci-btn-navy"><i class="fa-solid fa-filter"></i> กรองข้อมูล</button>
+          <button type="button" class="hci-btn hci-btn-outline" id="historyRefreshBtn"><i class="fa-solid fa-rotate"></i> อัปเดตข้อมูล</button>
+        </form>
+      </div>
+      <div class="hci-card">
+        <div class="hci-table-scroll">
           <table class="hci-table">
             <thead><tr><th>เลขที่</th><th>ห้อง</th><th>ผู้ตรวจสอบ</th><th>พนักงาน/แม่บ้าน</th><th>วันที่ / เวลา</th><th>รอบการตรวจ</th><th>คะแนน</th><th>สถานะ</th><th>การอนุมัติ</th><th></th></tr></thead>
-            <tbody>${history.items.map(i => `
-              <tr>
-                <td>${i.InspectionID}</td><td>${Utils.escapeHtml(i.RoomNumber)}</td><td>${Utils.escapeHtml(i.InspectorName)}</td>
-                <td>${Utils.escapeHtml(i.HousekeeperName || '-')}</td><td>${inspectionHistoryDateTime(i)}</td>
-                <td>${Utils.escapeHtml(i.InspectionRound || '-')}</td><td>${i.FinalScore}%</td>
-                <td><span class="hci-badge hci-badge-${Utils.statusMeta(i.FinalStatus).color}">${i.FinalStatus}</span></td>
-                <td>${approvalLabel(i.ApprovalStatus)}</td>
-                <td><button class="hci-btn-icon" onclick="location.hash='#/inspection-detail/${i.InspectionID}'"><i class="fa-solid fa-eye"></i></button></td>
-              </tr>`).join('') || emptyRow(10)}
-            </tbody>
+            <tbody id="historyTableBody">${emptyRow(10)}</tbody>
           </table>
         </div>
-      `;
+      </div>`;
+
+    const form = document.getElementById('historyFilterForm');
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      this.historyFilters = Object.fromEntries(new FormData(form).entries());
+      await this.refreshHistoryData();
+    });
+    document.getElementById('historyRefreshBtn').addEventListener('click', () => this.refreshHistoryData());
+    document.querySelectorAll('#historyQuickFilters .hci-quick-filter').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        document.querySelectorAll('#historyQuickFilters .hci-quick-filter').forEach(x => x.classList.toggle('active', x === btn));
+        if (btn.dataset.range === 'custom') { form.elements.dateFrom.focus(); return; }
+        const range = inspectionQuickDateRange(btn.dataset.range);
+        form.elements.dateFrom.value = range.dateFrom;
+        form.elements.dateTo.value = range.dateTo;
+        this.historyFilters = range;
+        await this.refreshHistoryData();
+      });
+    });
+    ['dateFrom','dateTo'].forEach(name => form.elements[name].addEventListener('change', () => {
+      document.querySelectorAll('#historyQuickFilters .hci-quick-filter').forEach(x => x.classList.toggle('active', x.dataset.range === 'custom'));
+    }));
+
+    await this.refreshHistoryData();
+    this.startLiveRefresh(() => this.refreshHistoryData(true));
+  },
+
+  async refreshHistoryData(silent = false) {
+    const tbody = document.getElementById('historyTableBody');
+    if (!tbody) return;
+    try {
+      if (!silent) Utils.showLoading('กำลังโหลดประวัติการตรวจสอบ...');
+      const filters = this.historyFilters || { dateFrom: Utils.todayISO(), dateTo: Utils.todayISO() };
+      const history = await Api.call('getInspectionHistory', Object.assign({ page: 1, pageSize: 500 }, filters), { silent });
+      tbody.innerHTML = history.items.map(i => `
+        <tr>
+          <td>${Utils.escapeHtml(i.InspectionID)}</td><td>${Utils.escapeHtml(i.RoomNumber)}</td><td>${Utils.escapeHtml(i.InspectorName)}</td>
+          <td>${Utils.escapeHtml(i.HousekeeperName || '-')}</td><td>${inspectionHistoryDateTime(i)}</td>
+          <td>${Utils.escapeHtml(i.InspectionRound || '-')}</td><td>${Number(i.FinalScore || 0)}%</td>
+          <td><span class="hci-badge hci-badge-${Utils.statusMeta(i.FinalStatus).color}">${Utils.escapeHtml(i.FinalStatus)}</span></td>
+          <td>${approvalLabel(i.ApprovalStatus)}</td>
+          <td><button class="hci-btn-icon" onclick="location.hash='#/inspection-detail/${Utils.escapeHtml(i.InspectionID)}'"><i class="fa-solid fa-eye"></i></button></td>
+        </tr>`).join('') || emptyRow(10);
+      const badge = document.getElementById('historyUpdatedAt');
+      if (badge) badge.textContent = `ข้อมูลล่าสุด ${inspectionClockText()} • ${history.total || 0} รายการ • อัปเดตอัตโนมัติ`;
     } catch (e) {
-      renderErrorState(container, 'ไม่สามารถโหลดประวัติการตรวจสอบได้', () => InspectionView.renderHistory(container));
-    } finally { Utils.hideLoading(); }
+      if (!silent) Utils.toast('error', e.message || 'โหลดประวัติไม่สำเร็จ');
+    } finally {
+      if (!silent) Utils.hideLoading();
+    }
   },
 
   // ---------------- รายละเอียดผลการตรวจ ----------------
@@ -339,42 +400,164 @@ const InspectionView = {
     } finally { Utils.hideLoading(); }
   },
 
-  // ---------------- รายการปัญหา / ยืนยันการแก้ไขของแม่บ้าน ----------------
+  // ---------------- รายงานปัญหา ----------------
   async renderIssues(container) {
-    Utils.showLoading('กำลังโหลดรายการปัญหา...');
-    try {
-      const issues = await Api.call('getIssues', {});
-      const user = Auth.getCurrentUser();
-      container.innerHTML = `
-        <div class="hci-page-header"><div><h1>${user.Role === 'HOUSEKEEPER' ? 'รายการที่ต้องแก้ไข' : 'รายการปัญหาที่ต้องแก้ไข'}</h1></div></div>
-        <div class="hci-card">
-          <table class="hci-table">
-            <thead><tr><th>รายการ</th><th>หมวด</th><th>ความรุนแรง</th><th>หมายเหตุ</th><th>สถานะ</th><th></th></tr></thead>
-            <tbody>${issues.items.map(d => `
-              <tr>
-                <td>${Utils.escapeHtml(d.ItemName)}</td><td>${APP_CONFIG.CATEGORY_LABELS[d.Category] || d.Category}</td>
-                <td><span class="hci-badge hci-badge-${d.Severity === 'เร่งด่วน' ? 'red' : 'amber'}">${d.Severity}</span></td>
-                <td>${Utils.escapeHtml(d.Note)}</td>
-                <td><span class="hci-badge hci-badge-${d.IssueStatus === 'แก้ไขแล้ว' ? 'green' : 'orange'}">${d.IssueStatus}</span></td>
-                <td><button class="hci-btn-icon" onclick="InspectionView.openIssueDialog('${d.DetailID}', '${d.IssueStatus}')"><i class="fa-solid fa-pen"></i></button></td>
-              </tr>`).join('') || emptyRow(6)}
-            </tbody>
+    this.stopLiveRefresh();
+    const today = Utils.todayISO();
+    this.issueFilters = { dateFrom: today, dateTo: today, status: '', severity: '' };
+    const user = Auth.getCurrentUser();
+
+    container.innerHTML = `
+      <div class="hci-page-header">
+        <div><h1>รายงานปัญหา</h1><p class="hci-subtitle">ข้อมูลแบบวันต่อวัน • พนักงานแม่บ้านสามารถดูรายละเอียดได้ทั้งหมด</p></div>
+        <div class="hci-header-actions"><span class="hci-badge hci-badge-navy" id="issuesUpdatedAt">กำลังโหลดข้อมูล...</span></div>
+      </div>
+      <div class="hci-card hci-dashboard-filter-card">
+        <div class="hci-quick-filters" id="issuesQuickFilters">
+          <button type="button" class="hci-quick-filter active" data-range="today">วันนี้</button>
+          <button type="button" class="hci-quick-filter" data-range="yesterday">เมื่อวาน</button>
+          <button type="button" class="hci-quick-filter" data-range="custom">กำหนดเอง</button>
+        </div>
+        <form id="issuesFilterForm" class="hci-filter-bar">
+          <div class="hci-filter-group"><label>วันที่เริ่มต้น</label><input type="date" name="dateFrom" value="${today}"></div>
+          <div class="hci-filter-group"><label>วันที่สิ้นสุด</label><input type="date" name="dateTo" value="${today}"></div>
+          <div class="hci-filter-group"><label>สถานะ</label><select name="status"><option value="">ทั้งหมด</option>${APP_CONFIG.ISSUE_STATUS_OPTIONS.map(x => `<option value="${Utils.escapeHtml(x)}">${Utils.escapeHtml(x)}</option>`).join('')}</select></div>
+          <div class="hci-filter-group"><label>ระดับความรุนแรง</label><select name="severity"><option value="">ทั้งหมด</option>${APP_CONFIG.SEVERITY_OPTIONS.map(x => `<option value="${Utils.escapeHtml(x)}">${Utils.escapeHtml(x)}</option>`).join('')}</select></div>
+          <button type="submit" class="hci-btn hci-btn-navy"><i class="fa-solid fa-filter"></i> กรองข้อมูล</button>
+          <button type="button" class="hci-btn hci-btn-outline" id="issuesRefreshBtn"><i class="fa-solid fa-rotate"></i> อัปเดตข้อมูล</button>
+        </form>
+      </div>
+      <div class="hci-card">
+        <div class="hci-table-scroll">
+          <table class="hci-table hci-issue-table">
+            <thead><tr>
+              <th>ห้อง / VIP</th><th>รายละเอียดปัญหา</th><th>หมวด / โซน</th><th>วันที่</th><th>เวลา</th>
+              <th>พนักงานแม่บ้าน / ผู้รายงาน</th><th>ผู้ตรวจสอบ</th><th>ระดับ</th><th>สถานะ</th><th>ผู้รับผิดชอบ</th>
+              <th>ผู้แก้ไขสถานะล่าสุด</th><th>อัปเดตล่าสุด</th><th>หมายเหตุ</th><th></th>
+            </tr></thead>
+            <tbody id="issuesTableBody">${emptyRow(14)}</tbody>
           </table>
         </div>
-      `;
+      </div>`;
+
+    const form = document.getElementById('issuesFilterForm');
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      this.issueFilters = Object.fromEntries(new FormData(form).entries());
+      await this.refreshIssuesData();
+    });
+    document.getElementById('issuesRefreshBtn').addEventListener('click', () => this.refreshIssuesData());
+    document.querySelectorAll('#issuesQuickFilters .hci-quick-filter').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        document.querySelectorAll('#issuesQuickFilters .hci-quick-filter').forEach(x => x.classList.toggle('active', x === btn));
+        if (btn.dataset.range === 'custom') { form.elements.dateFrom.focus(); return; }
+        const range = inspectionQuickDateRange(btn.dataset.range);
+        form.elements.dateFrom.value = range.dateFrom;
+        form.elements.dateTo.value = range.dateTo;
+        this.issueFilters = Object.assign({}, this.issueFilters || {}, range);
+        await this.refreshIssuesData();
+      });
+    });
+    ['dateFrom','dateTo'].forEach(name => form.elements[name].addEventListener('change', () => {
+      document.querySelectorAll('#issuesQuickFilters .hci-quick-filter').forEach(x => x.classList.toggle('active', x.dataset.range === 'custom'));
+    }));
+
+    await this.refreshIssuesData();
+    this.startLiveRefresh(() => this.refreshIssuesData(true));
+  },
+
+  async refreshIssuesData(silent = false) {
+    const tbody = document.getElementById('issuesTableBody');
+    if (!tbody) return;
+    try {
+      if (!silent) Utils.showLoading('กำลังโหลดรายงานปัญหา...');
+      const filters = this.issueFilters || { dateFrom: Utils.todayISO(), dateTo: Utils.todayISO(), status: '', severity: '' };
+      const issues = await Api.call('getIssues', filters, { silent });
+      const user = Auth.getCurrentUser();
+      tbody.innerHTML = issues.items.map(d => {
+        const canEdit = user && (user.Role === 'ADMIN' || user.Role === 'INSPECTOR' || (user.Role === 'HOUSEKEEPER' && String(d.HousekeeperID || '') === String(user.UserID || '')));
+        return `
+        <tr>
+          <td>${Utils.escapeHtml(issueRoomLabel(d))}</td>
+          <td>${Utils.escapeHtml(d.ItemName || '-')}</td>
+          <td>${Utils.escapeHtml(APP_CONFIG.CATEGORY_LABELS[d.Category] || d.Category || '-')}</td>
+          <td>${Utils.escapeHtml(inspectionDisplayDate(d.ReportDate))}</td>
+          <td>${Utils.escapeHtml(d.ReportTime || '-')}</td>
+          <td>${Utils.escapeHtml(d.HousekeeperName || d.ReporterName || '-')}</td>
+          <td>${Utils.escapeHtml(d.InspectorName || '-')}</td>
+          <td><span class="hci-badge hci-badge-${d.Severity === 'เร่งด่วน' ? 'red' : 'amber'}">${Utils.escapeHtml(d.Severity || '-')}</span></td>
+          <td>${issueStatusBadge(d.IssueStatus)}</td>
+          <td>${Utils.escapeHtml(d.AssignedTo || '-')}</td>
+          <td>${Utils.escapeHtml(d.LastStatusUpdatedBy || '-')}</td>
+          <td>${Utils.escapeHtml(issueUpdatedDateTime(d))}</td>
+          <td>${Utils.escapeHtml(d.LastStatusNote || d.AdminNote || d.Note || '-')}</td>
+          <td class="hci-nowrap">
+            <button class="hci-btn-icon" title="ดูรายละเอียด" onclick="InspectionView.openIssueDetail('${Utils.escapeHtml(d.DetailID)}')"><i class="fa-solid fa-eye"></i></button>
+            ${canEdit ? `<button class="hci-btn-icon" title="แก้ไขสถานะ" onclick="InspectionView.openIssueDialog('${Utils.escapeHtml(d.DetailID)}','${Utils.escapeHtml(d.IssueStatus || '')}')"><i class="fa-solid fa-pen"></i></button>` : ''}
+          </td>
+        </tr>`;
+      }).join('') || emptyRow(14);
+      const badge = document.getElementById('issuesUpdatedAt');
+      if (badge) badge.textContent = `ข้อมูลล่าสุด ${inspectionClockText()} • ${issues.total || 0} รายการ • อัปเดตอัตโนมัติ`;
     } catch (e) {
-      renderErrorState(container, 'ไม่สามารถโหลดรายการปัญหาได้', () => InspectionView.renderIssues(container));
-    } finally { Utils.hideLoading(); }
+      if (!silent) Utils.toast('error', e.message || 'โหลดรายงานปัญหาไม่สำเร็จ');
+    } finally {
+      if (!silent) Utils.hideLoading();
+    }
+  },
+
+  async openIssueDetail(detailId) {
+    Utils.showLoading('กำลังโหลดรายละเอียดปัญหา...');
+    try {
+      const data = await Api.call('getIssueDetails', { detailId }, { silent: true });
+      const issue = data.issue || {};
+      const ins = data.inspection || {};
+      const context = data.context || {};
+      const history = data.history || [];
+      await Swal.fire({
+        title: `รายละเอียดปัญหา • ${Utils.escapeHtml(issueRoomLabel(Object.assign({}, context, ins)))}`,
+        html: `
+          <div class="hci-issue-detail-grid">
+            ${issueDetailField('รายละเอียดปัญหา', issue.ItemName || '-')}
+            ${issueDetailField('หมวด / โซน', APP_CONFIG.CATEGORY_LABELS[issue.Category] || issue.Category || '-')}
+            ${issueDetailField('วันที่รายงาน', inspectionDisplayDate(context.ReportDate || ins.InspectionDate))}
+            ${issueDetailField('เวลารายงาน', context.ReportTime || '-')}
+            ${issueDetailField('พนักงานแม่บ้าน / ผู้รายงาน', context.HousekeeperName || context.ReporterName || ins.HousekeeperName || '-')}
+            ${issueDetailField('ผู้ตรวจสอบ', context.InspectorName || ins.InspectorName || '-')}
+            ${issueDetailField('ระดับความรุนแรง', issue.Severity || '-')}
+            ${issueDetailField('สถานะ', issue.IssueStatus || '-')}
+            ${issueDetailField('ผู้รับผิดชอบ', issue.AssignedTo || '-')}
+            ${issueDetailField('ผู้แก้ไขสถานะล่าสุด', context.LastStatusUpdatedBy || issue.LastStatusUpdatedBy || '-')}
+            ${issueDetailField('วันที่/เวลาแก้ไขล่าสุด', issueContextUpdatedText(context, issue))}
+            ${issueDetailField('หมายเหตุ', context.LastStatusNote || issue.LastStatusNote || issue.AdminNote || issue.Note || '-')}
+          </div>
+          <h3 class="hci-modal-section-title">ประวัติการเปลี่ยนสถานะ</h3>
+          ${renderIssueTimeline(history)}
+        `,
+        width: 960,
+        confirmButtonText: 'ปิด',
+        confirmButtonColor: '#0B1F3A'
+      });
+    } catch (e) {
+      Utils.toast('error', e.message || 'โหลดรายละเอียดปัญหาไม่สำเร็จ');
+    } finally {
+      Utils.hideLoading();
+    }
   },
 
   async openIssueDialog(detailId, currentStatus) {
+    const user = Auth.getCurrentUser();
+    if (!user || ['ADMIN','INSPECTOR','HOUSEKEEPER'].indexOf(user.Role) === -1) {
+      Utils.toast('warning', 'คุณไม่มีสิทธิ์แก้ไขสถานะ');
+      return;
+    }
     const { value: formValues } = await Swal.fire({
-      title: 'อัปเดตสถานะการแก้ไข',
+      title: 'อัปเดตสถานะรายการปัญหา',
       html: `
         <select id="swalIssueStatus" class="swal2-select">
-          ${APP_CONFIG.ISSUE_STATUS_OPTIONS.map(s => `<option ${s === currentStatus ? 'selected' : ''}>${s}</option>`).join('')}
+          ${APP_CONFIG.ISSUE_STATUS_OPTIONS.map(s => `<option value="${Utils.escapeHtml(s)}" ${s === currentStatus ? 'selected' : ''}>${Utils.escapeHtml(s)}</option>`).join('')}
         </select>
-        <textarea id="swalIssueNote" class="swal2-textarea" placeholder="หมายเหตุการแก้ไข (ถ้ามี)"></textarea>
+        <textarea id="swalIssueNote" class="swal2-textarea" placeholder="หมายเหตุการเปลี่ยนสถานะ (ถ้ามี)"></textarea>
         <input type="file" id="swalIssuePhoto" accept="image/*" class="swal2-file">
       `,
       focusConfirm: false, confirmButtonText: 'บันทึก', confirmButtonColor: '#0B1F3A', showCancelButton: true, cancelButtonText: 'ยกเลิก',
@@ -385,20 +568,21 @@ const InspectionView = {
         let afterImageUrl = '';
         if (fileInput.files[0]) {
           const compressed = await Utils.compressImage(fileInput.files[0]);
-          const uploadRes = await Api.call('uploadImage', {
-            base64Data: compressed.base64, mimeType: compressed.mimeType, phase: 'after', sequence: 1
-          });
+          const uploadRes = await Api.call('uploadImage', { base64Data: compressed.base64, mimeType: compressed.mimeType, phase: 'after', sequence: 1 });
           afterImageUrl = uploadRes.url;
         }
         return { status, note, afterImageUrl };
       }
     });
     if (!formValues) return;
-    Utils.showLoading('กำลังบันทึก...');
-    await Api.call('updateIssueStatus', { detailId, issueStatus: formValues.status, note: formValues.note, afterImageUrl: formValues.afterImageUrl });
-    Utils.hideLoading();
-    Utils.toast('success', 'อัปเดตสถานะสำเร็จ');
-    Router.reload();
+    Utils.showLoading('กำลังบันทึกสถานะ...');
+    try {
+      await Api.call('updateIssueStatus', { detailId, issueStatus: formValues.status, note: formValues.note, afterImageUrl: formValues.afterImageUrl });
+      Utils.toast('success', 'อัปเดตสถานะสำเร็จ');
+      await this.refreshIssuesData(true);
+    } finally {
+      Utils.hideLoading();
+    }
   }
 };
 
@@ -586,10 +770,7 @@ function updateZoneProgress(zone) {
 
 function openFirstIncompleteZone(catContainer) {
   const item = Array.from(catContainer.querySelectorAll('.hci-checklist-item'))
-    .find(el =>
-      el.dataset.category !== 'AMENITIES' &&
-      !el.querySelector('.hci-result-select').value
-    );
+    .find(el => el.dataset.category === 'SAFETY' && !el.querySelector('.hci-result-select').value);
   if (!item) return;
   const zone = item.closest('.hci-zone-accordion');
   const toggle = zone.querySelector('.hci-zone-toggle');
@@ -620,8 +801,8 @@ function collectFormData(form, catContainer) {
   const housekeeperId = matchedHousekeeper ? (matchedHousekeeper.dataset.userId || '') : '';
   const details = [];
   catContainer.querySelectorAll('.hci-checklist-item').forEach(itemEl => {
-    const result = itemEl.querySelector('.hci-result-select').value;
-    if (!result) return;
+    const selectedResult = itemEl.querySelector('.hci-result-select').value;
+    const result = selectedResult || 'ยังไม่ได้ประเมิน';
     details.push({
       itemId: itemEl.dataset.itemId,
       category: itemEl.dataset.category,
@@ -715,6 +896,86 @@ function inspectionHistoryDateTime(item, showRange = false) {
   }
 
   return Utils.escapeHtml(`${dateText}${timeText ? ' ' + timeText : ''}`);
+}
+
+function inspectionDateToISO(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function inspectionQuickDateRange(type) {
+  const now = new Date();
+  if (type === 'yesterday') {
+    const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const key = inspectionDateToISO(y);
+    return { dateFrom: key, dateTo: key };
+  }
+  const today = inspectionDateToISO(now);
+  return { dateFrom: today, dateTo: today };
+}
+
+function inspectionDisplayDate(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : (text || '-');
+}
+
+function inspectionClockText() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+}
+
+function issueRoomLabel(item) {
+  const number = item.RoomNumber || item.RoomName || '-';
+  return item.RoomType === 'VIP' || String(number).toUpperCase().includes('VIP') ? String(item.RoomName || number) : `ห้อง ${number}`;
+}
+
+function issueStatusBadge(status) {
+  const text = String(status || '-');
+  let color = 'orange';
+  if (/แก้ไขแล้ว|ปิดงาน/.test(text)) color = 'green';
+  else if (/เร่งด่วน|ไม่ผ่าน/.test(text)) color = 'red';
+  else if (/พบปัญหา|ต้องแก้ไข|รอ|กำลัง|รับเรื่อง/.test(text)) color = 'orange';
+  return `<span class="hci-badge hci-badge-${color}">${Utils.escapeHtml(text)}</span>`;
+}
+
+function issueUpdatedDateTime(item) {
+  const date = item.LastStatusUpdatedDate || '';
+  const time = item.LastStatusUpdatedTime || '';
+  if (date) return `${inspectionDisplayDate(date)}${time ? ' ' + time : ''}`;
+  const raw = String(item.LastStatusUpdatedAt || item.UpdatedAt || '').trim();
+  if (!raw) return '-';
+  const dateMatch = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
+  const timeMatch = raw.match(/(\d{1,2}:\d{2})/);
+  return `${dateMatch ? `${dateMatch[3]}/${dateMatch[2]}/${dateMatch[1]}` : raw}${timeMatch ? ' ' + timeMatch[1] : ''}`;
+}
+
+function issueContextUpdatedText(context, issue) {
+  const date = context.LastStatusUpdatedDate || '';
+  const time = context.LastStatusUpdatedTime || '';
+  if (date) return `${inspectionDisplayDate(date)}${time ? ' ' + time : ''}`;
+  return issueUpdatedDateTime(issue || {});
+}
+
+function issueDetailField(label, value) {
+  return `<div class="hci-detail-field"><span>${Utils.escapeHtml(label)}</span><strong>${Utils.escapeHtml(value === null || value === undefined || value === '' ? '-' : value)}</strong></div>`;
+}
+
+function renderIssueTimeline(history) {
+  if (!history || !history.length) return emptyState('ยังไม่มีประวัติการเปลี่ยนสถานะ');
+  return `<div class="hci-status-timeline">${history.map(item => `
+    <div class="hci-status-timeline-item">
+      <div class="hci-status-timeline-dot"></div>
+      <div class="hci-status-timeline-body">
+        <div class="hci-status-timeline-head"><strong>${Utils.escapeHtml(item.NewStatus || '-')}</strong><span>${Utils.escapeHtml(item.DateTime || '-')}</span></div>
+        <p><b>ผู้ดำเนินการ:</b> ${Utils.escapeHtml(item.Actor || '-')}</p>
+        <p><b>สถานะเดิม:</b> ${Utils.escapeHtml(item.OldStatus || '-')} → <b>สถานะใหม่:</b> ${Utils.escapeHtml(item.NewStatus || '-')}</p>
+        ${item.Note ? `<p><b>หมายเหตุ:</b> ${Utils.escapeHtml(item.Note)}</p>` : ''}
+      </div>
+    </div>`).join('')}</div>`;
 }
 
 function approvalLabel(status) {

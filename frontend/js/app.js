@@ -51,6 +51,11 @@ const Router = {
     if (!force && path === this.currentRoute) return;
     this.currentRoute = path;
 
+    // หยุด Live Refresh ของหน้าประวัติ/รายงานปัญหาเมื่อเปลี่ยนหน้า
+    if (typeof InspectionView !== 'undefined' && typeof InspectionView.stopLiveRefresh === 'function') {
+      InspectionView.stopLiveRefresh();
+    }
+
     const matched = this.matchRoute(path);
     if (!matched) { window.location.hash = '#/404'; return; }
     const { config, params } = matched;
@@ -201,7 +206,7 @@ const AppShell = {
       { hash: '#/dashboard', icon: 'fa-chart-line', label: 'Dashboard', roles: ['ADMIN'] },
       { hash: '#/rooms', icon: 'fa-door-open', label: 'ตรวจสอบห้องพัก', roles: ['ADMIN', 'INSPECTOR', 'HOUSEKEEPER'] },
       { hash: '#/history', icon: 'fa-clock-rotate-left', label: 'ประวัติการตรวจสอบ', roles: null },
-      { hash: '#/issues', icon: 'fa-screwdriver-wrench', label: 'รายการปัญหา', roles: null },
+      { hash: '#/issues', icon: 'fa-screwdriver-wrench', label: 'รายงานปัญหา', roles: null },
       { hash: '#/admin/users', icon: 'fa-users', label: 'จัดการพนักงาน', roles: ['ADMIN'] },
       { hash: '#/admin/rooms', icon: 'fa-hotel', label: 'จัดการห้องพัก', roles: ['ADMIN'] },
       { hash: '#/admin/audit', icon: 'fa-file-shield', label: 'Audit Log', roles: ['ADMIN'] },

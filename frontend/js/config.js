@@ -10,7 +10,7 @@ const APP_CONFIG = {
   // 'https://script.google.com/macros/s/AKfycb.../exec'
   GAS_WEB_APP_URL: 'https://script.google.com/macros/s/AKfycbzJfwYyXZE4rZUohSqyxBBkR6eTg6zcq6efKNbrYbiEyX5i0vQ4Gdohf8jk9J8BPbpa/exec',
 
-  BUILD_VERSION: '2026.08.13.3',
+  BUILD_VERSION: '2026.09.05.5',
   APP_NAME: 'Grand Inspection',
   APP_NAME_TH: 'ระบบตรวจสอบมาตรฐานความสะอาด',
   TIMEZONE: 'Asia/Bangkok',
@@ -43,5 +43,5 @@ const APP_CONFIG = {
 
   RESULT_OPTIONS: ['ผ่าน', 'ไม่ผ่าน'],
   SEVERITY_OPTIONS: ['ต่ำ', 'ปานกลาง', 'สูง', 'เร่งด่วน'],
-  ISSUE_STATUS_OPTIONS: ['รอดำเนินการ', 'กำลังแก้ไข', 'แก้ไขแล้ว']
+  ISSUE_STATUS_OPTIONS: ['พบปัญหา', 'ต้องแก้ไข', 'รับเรื่องแล้ว', 'รอดำเนินการ', 'กำลังดำเนินการ', 'กำลังแก้ไข', 'รอตรวจซ้ำ', 'แก้ไขแล้ว', 'ปิดงาน']
 };
