@@ -479,7 +479,7 @@ const INSPECTION_CATEGORIES = ['BEDROOM', 'BATHROOM', 'AMENITIES', 'SAFETY'];
 const INSPECTION_CATEGORY_ICONS = {
   BEDROOM: 'fa-bed',
   BATHROOM: 'fa-bath',
-  AMENITIES: 'fa-mug-hot',
+  AMENITIES: 'fa-hotel',
   SAFETY: 'fa-shield-halved'
 };
 
