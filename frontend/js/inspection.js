@@ -475,7 +475,9 @@ const InspectionView = {
       const issues = await Api.call('getIssues', filters, { silent });
       const user = Auth.getCurrentUser();
       tbody.innerHTML = issues.items.map(d => {
-        const canEdit = user && (user.Role === 'ADMIN' || user.Role === 'INSPECTOR' || (user.Role === 'HOUSEKEEPER' && String(d.HousekeeperID || '') === String(user.UserID || '')));
+        // ADMIN / INSPECTOR / HOUSEKEEPER สามารถแก้ไขสถานะรายการปัญหาได้ทั้งหมด
+        // ชื่อผู้แก้ไขจะถูกบันทึกจากบัญชีที่ Login อัตโนมัติที่ Backend
+        const canEdit = user && ['ADMIN', 'INSPECTOR', 'HOUSEKEEPER'].indexOf(user.Role) !== -1;
         return `
         <tr>
           <td>${Utils.escapeHtml(issueRoomLabel(d))}</td>
