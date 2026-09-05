@@ -32,7 +32,7 @@ const InspectionView = {
         <div class="hci-page-header"><div><h1>รายการห้องพักและบ้านพัก</h1><p class="hci-subtitle">เลือกห้องที่ต้องการตรวจสอบความสะอาด</p></div></div>
         <div class="hci-filter-bar hci-card">
           <div class="hci-filter-group"><label>ประเภท</label>
-            <select id="filterRoomType"><option value="">ทั้งหมด</option><option value="GUEST_ROOM">ห้องพัก</option><option value="VIP">VIP</option></select>
+            <select id="filterRoomType"><option value="">ทั้งหมด</option><option value="GUEST_ROOM">ห้องพัก</option><option value="VIP">VIP</option><option value="HOTEL_AREA">บริเวณโรงแรม</option></select>
           </div>
           <div class="hci-filter-group"><label>ค้นหาหมายเลขห้อง</label><input type="text" id="filterRoomSearch" placeholder="เช่น 101"></div>
         </div>
@@ -82,7 +82,7 @@ const InspectionView = {
 
       container.innerHTML = `
         <div class="hci-page-header"><div>
-          <h1>แบบฟอร์มตรวจสอบ: ${room.RoomType === 'VIP' ? Utils.escapeHtml(room.RoomName) : 'ห้อง ' + Utils.escapeHtml(room.RoomNumber)}</h1>
+          <h1>แบบฟอร์มตรวจสอบ: ${Utils.escapeHtml(inspectionPropertyLabel(room))}</h1>
           <p class="hci-subtitle">ผู้ตรวจสอบ: ${Utils.escapeHtml(user.FullName)} • วันที่ ${Utils.formatDateTh(new Date())}</p>
         </div></div>
 
@@ -932,9 +932,17 @@ function inspectionClockText() {
   return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
 }
 
+function inspectionPropertyLabel(item) {
+  if (!item) return '-';
+  if (item.RoomType === 'HOTEL_AREA') return item.RoomName || 'บริเวณโรงแรม';
+  if (item.RoomType === 'VIP' || String(item.RoomNumber || '').toUpperCase().includes('VIP')) {
+    return item.RoomName || item.RoomNumber || '-';
+  }
+  return `ห้อง ${item.RoomNumber || '-'}`;
+}
+
 function issueRoomLabel(item) {
-  const number = item.RoomNumber || item.RoomName || '-';
-  return item.RoomType === 'VIP' || String(number).toUpperCase().includes('VIP') ? String(item.RoomName || number) : `ห้อง ${number}`;
+  return inspectionPropertyLabel(item);
 }
 
 function issueStatusBadge(status) {

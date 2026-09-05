@@ -104,7 +104,7 @@ const AdminView = {
             <tbody>${rooms.items.map(r => `
               <tr>
                 <td>${Utils.escapeHtml(r.RoomName || r.RoomNumber)}</td>
-                <td>${r.RoomType === 'VIP' ? 'VIP' : 'ห้องพัก'}</td><td>${Utils.escapeHtml(r.Floor || '-')}</td>
+                <td>${r.RoomType === 'HOTEL_AREA' ? 'บริเวณโรงแรม' : (r.RoomType === 'VIP' ? 'VIP' : 'ห้องพัก')}</td><td>${Utils.escapeHtml(r.Floor || '-')}</td>
                 <td><span class="hci-badge hci-badge-${Utils.statusMeta(r.Status).color}">${r.Status}</span></td>
                 <td>${Utils.escapeHtml((users.items.find(h => h.UserID === r.AssignedHousekeeper) || {}).FullName || '-')}</td>
                 <td><button class="hci-btn-icon" onclick="AdminView.openRoomDialog('${r.RoomID}')"><i class="fa-solid fa-pen"></i></button></td>
@@ -130,6 +130,7 @@ const AdminView = {
         <select id="swalRoomType" class="swal2-select">
           <option value="GUEST_ROOM" ${existing && existing.RoomType === 'GUEST_ROOM' ? 'selected' : ''}>ห้องพัก</option>
           <option value="VIP" ${existing && existing.RoomType === 'VIP' ? 'selected' : ''}>VIP</option>
+          <option value="HOTEL_AREA" ${existing && existing.RoomType === 'HOTEL_AREA' ? 'selected' : ''}>บริเวณโรงแรม</option>
         </select>
         <input id="swalFloor" class="swal2-input" placeholder="ชั้น" value="${existing ? Utils.escapeHtml(existing.Floor || '') : ''}">
         <select id="swalHousekeeper" class="swal2-select">

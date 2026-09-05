@@ -65,8 +65,8 @@ const DashboardView = {
 
         <div class="hci-card">
           <div class="hci-card-head">
-            <h3>สถานะห้องพักและบ้านพัก</h3>
-            <span class="hci-muted">${rooms.items.length} ห้อง/หลัง</span>
+            <h3>สถานะห้องพัก บ้านพัก และบริเวณโรงแรม</h3>
+            <span class="hci-muted">${rooms.items.length} หน่วย</span>
           </div>
           <div class="hci-room-grid" id="homeRoomGrid"></div>
         </div>
@@ -105,7 +105,7 @@ const DashboardView = {
           <div class="hci-filter-group"><label for="dashDateTo">วันที่สิ้นสุด</label><input id="dashDateTo" type="date" name="dateTo" value="${today}"></div>
           <div class="hci-filter-group"><label for="dashHousekeeper">พนักงานแม่บ้าน</label><select id="dashHousekeeper" name="housekeeperId"><option value="">ทั้งหมด</option></select></div>
           <div class="hci-filter-group"><label for="dashInspector">ผู้ตรวจสอบ</label><select id="dashInspector" name="inspectorId"><option value="">ทั้งหมด</option></select></div>
-          <div class="hci-filter-group"><label for="dashRoom">ห้องพัก / VIP</label><select id="dashRoom" name="roomId"><option value="">ทั้งหมด</option></select></div>
+          <div class="hci-filter-group"><label for="dashRoom">ห้องพัก / VIP / บริเวณโรงแรม</label><select id="dashRoom" name="roomId"><option value="">ทั้งหมด</option></select></div>
           <div class="hci-filter-group"><label for="dashStatus">สถานะ</label><select id="dashStatus" name="status"><option value="">ทั้งหมด</option></select></div>
           <button type="submit" class="hci-btn hci-btn-navy" id="dashFilterButton"><i class="fa-solid fa-filter"></i> กรองข้อมูล</button>
         </form>
@@ -2617,8 +2617,19 @@ function dashboardBadge(value) {
   else if (/ตรวจแล้ว/.test(text)) color = 'teal';
   return `<span class="hci-badge hci-badge-${color}">${Utils.escapeHtml(text)}</span>`;
 }
-function dashboardRoomLabel(item) { return item.RoomType === 'VIP' || String(item.RoomNumber || '').toUpperCase().includes('VIP') ? (item.RoomName || item.RoomNumber || '-') : `ห้อง ${item.RoomNumber || '-'}`; }
-function dashboardRoomType(type) { return type === 'VIP' ? 'VIP' : (type === 'GUEST_ROOM' ? 'ห้องพัก' : (type || '-')); }
+function dashboardRoomLabel(item) {
+  if (item.RoomType === 'HOTEL_AREA') return item.RoomName || 'บริเวณโรงแรม';
+  if (item.RoomType === 'VIP' || String(item.RoomNumber || '').toUpperCase().includes('VIP')) {
+    return item.RoomName || item.RoomNumber || '-';
+  }
+  return `ห้อง ${item.RoomNumber || '-'}`;
+}
+function dashboardRoomType(type) {
+  if (type === 'HOTEL_AREA') return 'บริเวณโรงแรม';
+  if (type === 'VIP') return 'VIP';
+  if (type === 'GUEST_ROOM') return 'ห้องพัก';
+  return type || '-';
+}
 function dashboardCategory(category) { return ({ BEDROOM: 'โซนห้องนอน', BATHROOM: 'โซนห้องน้ำ', AMENITIES: 'โซนบริเวณโรงแรม', SAFETY: 'แจ้งอุปกรณ์เสียหาย', OVERALL: 'ภาพรวม' })[category] || category || '-'; }
 function dashboardDate(value) { if (!value) return '-'; const parts = String(value).slice(0, 10).split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : String(value); }
 function dashboardDateTime(value) { if (!value) return '-'; const text = String(value).replace('T', ' '); return `${dashboardDate(text.slice(0, 10))}${text.length >= 16 ? ' ' + text.slice(11, 16) : ''}`; }
@@ -2661,10 +2672,17 @@ function renderRoomGrid(el, rooms, user) {
       ? 'ยังไม่ได้ทำความสะอาด'
       : r.Status;
     const meta = Utils.statusMeta(effectiveStatus);
+    const isHotelArea = r.RoomType === 'HOTEL_AREA';
+    const cardIcon = isHotelArea ? 'fa-hotel' : meta.icon;
+    const cardLabel = isHotelArea
+      ? (r.RoomName || 'บริเวณโรงแรม')
+      : (r.RoomType === 'VIP'
+        ? (r.RoomName || r.RoomNumber)
+        : 'ห้อง ' + (r.RoomNumber || '-'));
     const canInspect = ['ADMIN', 'INSPECTOR', 'HOUSEKEEPER'].indexOf(user.Role) !== -1;
     return `<div class="hci-room-card hci-color-${meta.color}" ${canInspect ? `onclick="location.hash='#/inspection/${r.RoomID}'"` : ''}>
-      <div class="hci-room-icon"><i class="fa-solid ${meta.icon}"></i></div>
-      <p class="hci-room-number">${r.RoomType === 'VIP' ? Utils.escapeHtml(r.RoomName || r.RoomNumber) : 'ห้อง ' + Utils.escapeHtml(r.RoomNumber)}</p>
+      <div class="hci-room-icon"><i class="fa-solid ${cardIcon}"></i></div>
+      <p class="hci-room-number">${Utils.escapeHtml(cardLabel)}</p>
       <p class="hci-room-status">${Utils.escapeHtml(effectiveStatus)}</p>
     </div>`;
   }).join('');
