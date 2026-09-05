@@ -426,3 +426,18 @@ html.dark .hci-detail-accordion summary { background: var(--c-cream-2); color: v
 .hci-demo-hint { margin-top: 20px; padding: 14px 16px; background: rgba(201,162,75,0.10); border: 1px dashed var(--c-gold); border-radius: 10px; font-size: 12.5px; color: var(--c-text-muted); }
 .hci-demo-hint p { margin: 3px 0; }
 .hci-demo-hint code { background: rgba(11,31,58,0.06); padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+
+
+/* ===== History / Issue live data ===== */
+.hci-issue-table { min-width: 1750px; }
+.hci-nowrap { white-space: nowrap; }
+.hci-issue-detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; text-align:left; margin:8px 0 18px; }
+.hci-modal-section-title { text-align:left; margin:18px 0 10px; color:var(--c-navy); }
+.hci-status-timeline { position:relative; display:flex; flex-direction:column; gap:12px; text-align:left; }
+.hci-status-timeline-item { position:relative; display:grid; grid-template-columns:18px 1fr; gap:10px; }
+.hci-status-timeline-dot { width:12px; height:12px; border-radius:50%; background:var(--c-gold); margin-top:7px; box-shadow:0 0 0 4px rgba(195,151,46,.12); }
+.hci-status-timeline-body { border:1px solid var(--c-border); border-radius:12px; padding:12px 14px; background:var(--bg-surface); }
+.hci-status-timeline-head { display:flex; gap:12px; justify-content:space-between; align-items:center; margin-bottom:6px; }
+.hci-status-timeline-head span { color:var(--c-text-muted); font-size:12px; }
+.hci-status-timeline-body p { margin:4px 0; }
+@media (max-width:760px) { .hci-issue-detail-grid { grid-template-columns:1fr; } }
