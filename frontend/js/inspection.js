@@ -130,10 +130,32 @@ const InspectionView = {
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const data = collectFormData(form, catContainer);
-        const totalItems = catContainer.querySelectorAll('.hci-checklist-item').length;
-        if (!data.details.length || data.details.length !== totalItems) {
+
+        // บังคับประเมินให้ครบเฉพาะ:
+        // - โซนห้องนอน
+        // - โซนห้องน้ำ
+        // - ภาพรวมความปลอดภัย
+        //
+        // โซนบริเวณโรงแรม (AMENITIES) เป็นรายการเสริม:
+        // จะประเมินบางรายการ / ทุก
+        // รายการ / ไม่ประเมินเลยก็สามารถตรวจทานและบันทึกได้
+        const requiredItems = Array.from(
+          catContainer.querySelectorAll('.hci-checklist-item')
+        ).filter(item => item.dataset.category !== 'AMENITIES');
+
+        const requiredAnswered = data.details.filter(
+          detail => detail.category !== 'AMENITIES'
+        );
+
+        if (
+          requiredItems.length === 0 ||
+          requiredAnswered.length !== requiredItems.length
+        ) {
           openFirstIncompleteZone(catContainer);
-          Utils.toast('warning', 'กรุณาประเมินผลให้ครบทุกรายการก่อนตรวจทาน');
+          Utils.toast(
+            'warning',
+            'กรุณาประเมินผลให้ครบในโซนห้องนอน โซนห้องน้ำ และภาพรวมความปลอดภัยก่อนตรวจทาน'
+          );
           return;
         }
         const missingNote = data.details.find(d => d.result === 'ไม่ผ่าน' && !d.note);
@@ -564,7 +586,10 @@ function updateZoneProgress(zone) {
 
 function openFirstIncompleteZone(catContainer) {
   const item = Array.from(catContainer.querySelectorAll('.hci-checklist-item'))
-    .find(el => !el.querySelector('.hci-result-select').value);
+    .find(el =>
+      el.dataset.category !== 'AMENITIES' &&
+      !el.querySelector('.hci-result-select').value
+    );
   if (!item) return;
   const zone = item.closest('.hci-zone-accordion');
   const toggle = zone.querySelector('.hci-zone-toggle');
