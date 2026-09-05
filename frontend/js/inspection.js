@@ -148,7 +148,7 @@ const InspectionView = {
 
         // โซนห้องนอน / โซนห้องน้ำ / โซนบริเวณโรงแรม
         // สามารถเว้นบางรายการเป็น “ยังไม่ได้ประเมิน” ได้
-        // ภาพรวมความปลอดภัยยังคงบังคับให้ประเมินครบทุกข้อ
+        // แจ้งอุปกรณ์เสียหายยังคงบังคับให้ประเมินครบทุกข้อ
         const requiredItems = Array.from(
           catContainer.querySelectorAll('.hci-checklist-item')
         ).filter(item => item.dataset.category === 'SAFETY');
@@ -159,7 +159,7 @@ const InspectionView = {
 
         if (requiredItems.length > 0 && requiredAnswered.length !== requiredItems.length) {
           openFirstIncompleteZone(catContainer);
-          Utils.toast('warning', 'กรุณาประเมินผลในภาพรวมความปลอดภัยให้ครบทุกรายการก่อนตรวจทาน');
+          Utils.toast('warning', 'กรุณาประเมินผลในหัวข้อแจ้งอุปกรณ์เสียหายให้ครบทุกรายการก่อนตรวจทาน');
           return;
         }
         const missingNote = data.details.find(d => d.result === 'ไม่ผ่าน' && !d.note);
@@ -594,7 +594,7 @@ const InspectionView = {
  * BEDROOM | โซนห้องนอน
  * BATHROOM | โซนห้องน้ำ
  * AMENITIES | โซนบริเวณโรงแรม
- * SAFETY | ภาพรวมความปลอดภัย
+ * SAFETY | แจ้งอุปกรณ์เสียหาย
  *
  * ระบบหน้าเว็บจะ normalize กลับเป็น key เดิมเสมอ
  */
@@ -611,7 +611,11 @@ function normalizeInspectionCategoryKey(value) {
     text === 'โซนบริเวณโรงแรม' ||
     text === 'สิ่งอำนวยความสะดวก'
   ) return 'AMENITIES';
-  if (upper.startsWith('SAFETY') || text === 'ภาพรวมความปลอดภัย') return 'SAFETY';
+  if (
+    upper.startsWith('SAFETY') ||
+    text === 'แจ้งอุปกรณ์เสียหาย' ||
+    text === 'ภาพรวมความปลอดภัย'
+  ) return 'SAFETY';
   if (
     upper.startsWith('OVERALL') ||
     text === 'ภาพรวมและความพร้อมใช้งาน' ||
@@ -664,7 +668,7 @@ const INSPECTION_CATEGORY_ICONS = {
   BEDROOM: 'fa-bed',
   BATHROOM: 'fa-bath',
   AMENITIES: 'fa-hotel',
-  SAFETY: 'fa-shield-halved'
+  SAFETY: 'fa-screwdriver-wrench'
 };
 
 function renderCategoryBlock(cat, items, draft) {
