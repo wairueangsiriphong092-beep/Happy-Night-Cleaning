@@ -2485,7 +2485,7 @@ async function openDashboardInspectionDetail(inspectionId) {
     const result = await Api.call('getInspectionDetail', { inspectionId }, { silent: true });
     const inspection = result.inspection || {};
     const details = Array.isArray(result.details) ? result.details : [];
-    const categories = { BEDROOM: 'โซนห้องนอน', BATHROOM: 'โซนห้องน้ำ', AMENITIES: 'สิ่งอำนวยความสะดวก', SAFETY: 'ภาพรวมความปลอดภัย', OVERALL: 'ภาพรวมและความพร้อมใช้งาน' };
+    const categories = { BEDROOM: 'โซนห้องนอน', BATHROOM: 'โซนห้องน้ำ', AMENITIES: 'โซนบริเวณโรงแรม', SAFETY: 'ภาพรวมความปลอดภัย', OVERALL: 'ภาพรวมและความพร้อมใช้งาน' };
     const issueCount = details.filter(item => item.Result === 'ไม่ผ่าน' || item.Result === 'ต้องแก้ไข').length;
     dashboardShowModal(`รายละเอียด ${dashboardRoomLabel(inspection)}`, `
       <div class="hci-detail-grid">
@@ -2619,7 +2619,7 @@ function dashboardBadge(value) {
 }
 function dashboardRoomLabel(item) { return item.RoomType === 'VIP' || String(item.RoomNumber || '').toUpperCase().includes('VIP') ? (item.RoomName || item.RoomNumber || '-') : `ห้อง ${item.RoomNumber || '-'}`; }
 function dashboardRoomType(type) { return type === 'VIP' ? 'VIP' : (type === 'GUEST_ROOM' ? 'ห้องพัก' : (type || '-')); }
-function dashboardCategory(category) { return ({ BEDROOM: 'โซนห้องนอน', BATHROOM: 'โซนห้องน้ำ', AMENITIES: 'สิ่งอำนวยความสะดวก', SAFETY: 'ภาพรวมความปลอดภัย', OVERALL: 'ภาพรวม' })[category] || category || '-'; }
+function dashboardCategory(category) { return ({ BEDROOM: 'โซนห้องนอน', BATHROOM: 'โซนห้องน้ำ', AMENITIES: 'โซนบริเวณโรงแรม', SAFETY: 'ภาพรวมความปลอดภัย', OVERALL: 'ภาพรวม' })[category] || category || '-'; }
 function dashboardDate(value) { if (!value) return '-'; const parts = String(value).slice(0, 10).split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : String(value); }
 function dashboardDateTime(value) { if (!value) return '-'; const text = String(value).replace('T', ' '); return `${dashboardDate(text.slice(0, 10))}${text.length >= 16 ? ' ' + text.slice(11, 16) : ''}`; }
 function dashboardTime(value) { if (!value) return ''; const match = String(value).match(/(\d{1,2}):(\d{2})/); return match ? `${String(match[1]).padStart(2, '0')}:${match[2]}` : ''; }

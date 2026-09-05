@@ -36,7 +36,7 @@ const APP_CONFIG = {
   CATEGORY_LABELS: {
     BEDROOM: 'โซนห้องนอน',
     BATHROOM: 'โซนห้องน้ำ',
-    AMENITIES: 'สิ่งอำนวยความสะดวก',
+    AMENITIES: 'โซนบริเวณโรงแรม',
     SAFETY: 'ภาพรวมความปลอดภัย',
     OVERALL: 'ภาพรวมและความพร้อมใช้งาน'
   },
