@@ -146,22 +146,9 @@ const InspectionView = {
         e.preventDefault();
         const data = collectFormData(form, catContainer);
 
-        // โซนห้องนอน / โซนห้องน้ำ / โซนบริเวณโรงแรม
-        // สามารถเว้นบางรายการเป็น “ยังไม่ได้ประเมิน” ได้
-        // แจ้งอุปกรณ์เสียหายยังคงบังคับให้ประเมินครบทุกข้อ
-        const requiredItems = Array.from(
-          catContainer.querySelectorAll('.hci-checklist-item')
-        ).filter(item => item.dataset.category === 'SAFETY');
-
-        const requiredAnswered = data.details.filter(
-          detail => detail.category === 'SAFETY' && detail.result !== 'ยังไม่ได้ประเมิน'
-        );
-
-        if (requiredItems.length > 0 && requiredAnswered.length !== requiredItems.length) {
-          openFirstIncompleteZone(catContainer);
-          Utils.toast('warning', 'กรุณาประเมินผลในหัวข้อแจ้งอุปกรณ์เสียหายให้ครบทุกรายการก่อนตรวจทาน');
-          return;
-        }
+        // ทุกโซนสามารถเว้นบางรายการเป็น “ยังไม่ได้ประเมิน” ได้
+        // รวมถึงหัวข้อ “แจ้งอุปกรณ์เสียหาย”
+        // รายการที่ไม่ได้ประเมินจะไม่ถูกนำไปคำนวณคะแนน
         const missingNote = data.details.find(d => d.result === 'ไม่ผ่าน' && !d.note);
         if (missingNote) {
           Utils.toast('warning', 'รายการที่ไม่ผ่าน ต้องระบุหมายเหตุ: ' + missingNote.itemName);
@@ -772,17 +759,6 @@ function updateZoneProgress(zone) {
   const counter = zone.querySelector('.hci-zone-answered');
   if (counter) counter.textContent = answered;
   zone.classList.toggle('is-complete', selects.length > 0 && answered === selects.length);
-}
-
-function openFirstIncompleteZone(catContainer) {
-  const item = Array.from(catContainer.querySelectorAll('.hci-checklist-item'))
-    .find(el => el.dataset.category === 'SAFETY' && !el.querySelector('.hci-result-select').value);
-  if (!item) return;
-  const zone = item.closest('.hci-zone-accordion');
-  const toggle = zone.querySelector('.hci-zone-toggle');
-  toggleInspectionZone(toggle, true);
-  item.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  setTimeout(() => item.querySelector('.hci-result-select').focus(), 350);
 }
 
 function restoreDraftValues() { /* placeholder เผื่อขยายในอนาคต (การกู้คืนค่า checklist แบบเต็มรูปแบบ) */ }
